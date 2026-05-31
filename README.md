@@ -257,6 +257,24 @@ Useful commands:
 
 Object interactions create `object_interactions` rows and may create observations. Object state persists across ticks, for example opening the utility panel or patching the northwest seam.
 
+## v0.4B - Social Interaction
+
+Adam and Galya can now start short, purposeful social scenes, make commitments, and create lightweight joint tasks. Automatic social interaction is capped at two messages per tick and only triggers when there is a reason, such as same-location context, resource use, stress, fear, active experiments, or open commitments.
+
+Useful commands:
+
+```text
+/social
+/talk adam galya Should we open the shelter door tonight?
+/ask_pair adam galya Do you trust each other right now?
+/commitments
+/joint_tasks
+/resolve_social <interaction_id>
+/nudge_social galya adam Adam used shared water without asking.
+```
+
+Social turns are stored in `agent_social_turns`, promises in `agent_commitments`, cooperation plans in `joint_tasks`, and trust/tension changes in `relationship_events`.
+
 ## Validation
 
 ```bash

@@ -10,7 +10,25 @@ import { applyRelationshipEffects, ensureRelationshipPair, formatRelationshipSum
 import { generateAgentReaction } from "@/lib/ai/agent-reaction";
 import { createAgentObservationsFromTick, defaultObservationForAction, loadAgentPerceptionContext } from "@/lib/world/perception";
 import { applyInteractionStats, executeWorldInteraction } from "@/lib/world/interactions";
-import { formatLocationContext, loadAgentEmbodiedContext } from "@/lib/world/map";
+import { formatLocationContext, loadAgentEmbodiedContext, loadAgentLocation } from "@/lib/world/map";
+import {
+  addSocialTurn,
+  createCommitment,
+  createJointTask,
+  createRelationshipEvent,
+  createSocialInteraction,
+  getActiveJointTasks,
+  getActiveSocialInteractions,
+  getOpenCommitments,
+  getRecentRelationshipEvents,
+  getRecentSocialTurns,
+  resolveSocialInteraction,
+  shouldTriggerSocialInteraction,
+  updateCommitmentsForAction,
+  type SocialInteraction
+} from "@/lib/world/social";
+import { generateSocialInitiation, generateSocialResponse, type SocialInitiationOutput, type SocialResponseOutput } from "@/lib/ai/social-interaction";
+import { getActiveExperiment } from "@/lib/experiments/service";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -78,6 +96,13 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     const perception = await loadAgentPerceptionContext(agent.id, world.id, relationships);
     const embodiedContextRaw = await loadAgentEmbodiedContext(world.id, agent.id);
     const embodiedContext = embodiedContextRaw ? formatLocationContext(embodiedContextRaw) : null;
+    const socialContext = {
+      activeInteractions: await getActiveSocialInteractions(world.id),
+      recentSocialTurns: await getRecentSocialTurns(world.id, 8),
+      openCommitments: await getOpenCommitments(world.id, agent.id),
+      activeJointTasks: await getActiveJointTasks(world.id),
+      recentRelationshipEvents: await getRecentRelationshipEvents(world.id, 8)
+    };
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 
@@ -88,7 +113,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
     tickId = (tick as { id: string }).id;
 
-    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext });
+    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext });
     const isEmbodiedAction = embodiedActionTypes.has(aiOutput.selected_action.type);
     const interactionResult = isEmbodiedAction
       ? await executeWorldInteraction({
@@ -257,6 +282,26 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     }
 
     await sql`update agents set last_active_tick = ${world.tick_count + 1}, updated_at = now() where id = ${agent.id}`;
+    const fulfilledCommitments = await updateCommitmentsForAction({
+      worldId: world.id,
+      agentId: agent.id,
+      tickNumber: world.tick_count + 1,
+      actionType: aiOutput.selected_action.type,
+      target: aiOutput.selected_action.target
+    });
+    for (const commitment of fulfilledCommitments) {
+      if (!commitment.target_agent_id) continue;
+      await applyRelationshipEffects(commitment.target_agent_id, agent.id, { trust: 5, respect: 3, tension: -2 });
+      await createRelationshipEvent({
+        worldId: world.id,
+        sourceAgentId: commitment.target_agent_id,
+        targetAgentId: agent.id,
+        tickId,
+        eventType: "promise_kept",
+        summary: `${agent.name} fulfilled a commitment: ${commitment.content}`,
+        effects: { trust: 5, respect: 3, tension: -2 }
+      });
+    }
     await maybeReactAfterTick({
       world,
       actingAgent: agent,
@@ -265,6 +310,23 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       tickId,
       chatId: options.sendTelegram === false ? null : world.telegram_chat_id,
       worldState: nextWorldState,
+      events
+    });
+
+    await maybeRunSocialInteraction({
+      world,
+      actingAgent: agent,
+      actingStats: nextStats,
+      actionType: aiOutput.selected_action.type,
+      actionEffects: actionResult.effects,
+      recentAction: {
+        type: aiOutput.selected_action.type,
+        target: aiOutput.selected_action.target,
+        description: aiOutput.selected_action.description,
+        effects: actionResult.effects
+      },
+      tickId,
+      chatId: options.sendTelegram === false ? null : world.telegram_chat_id,
       events
     });
 
@@ -370,6 +432,224 @@ async function maybeReactAfterTick(input: {
     await sql`
       insert into audit_logs (world_id, actor_type, actor_id, action, payload)
       values (${input.world.id}, 'system', ${input.actingAgent.id}, 'agent_reaction_failed', ${JSON.stringify({ error: error instanceof Error ? error.message : "Unknown reaction error" })})
+    `;
+  }
+}
+
+function hasMeaningfulEffect(effects: Record<string, unknown>): boolean {
+  const statDeltas = effects.stat_deltas;
+  const resourceDeltas = effects.resource_deltas;
+  const objectEffects = effects.object_effects;
+  const inventoryEffects = effects.inventory_effects;
+  const hasNumbers = (value: unknown) => Boolean(value && typeof value === "object" && Object.values(value).some((entry) => Number(entry) !== 0));
+  return hasNumbers(statDeltas) ||
+    hasNumbers(resourceDeltas) ||
+    (Array.isArray(objectEffects) && objectEffects.length > 0) ||
+    (Array.isArray(inventoryEffects) && inventoryEffects.length > 0);
+}
+
+async function persistSocialArtifacts(input: {
+  worldId: string;
+  sourceAgentId: string;
+  targetAgentId: string;
+  interaction: SocialInteraction;
+  output: SocialInitiationOutput | SocialResponseOutput;
+  tickId: string | null;
+}) {
+  if (input.output.proposed_commitment) {
+    await createCommitment({
+      worldId: input.worldId,
+      agentId: input.sourceAgentId,
+      targetAgentId: input.targetAgentId,
+      interactionId: input.interaction.id,
+      commitmentType: input.output.proposed_commitment.commitment_type,
+      content: input.output.proposed_commitment.content,
+      dueTick: input.output.proposed_commitment.due_tick
+    });
+  }
+
+  if (input.output.proposed_joint_task) {
+    await createJointTask({
+      worldId: input.worldId,
+      title: input.output.proposed_joint_task.title,
+      description: input.output.proposed_joint_task.description,
+      createdByAgentId: input.sourceAgentId,
+      assignedAgentIds: [input.sourceAgentId, input.targetAgentId],
+      requiredLocationKey: input.output.proposed_joint_task.required_location_key,
+      requiredObjectKey: input.output.proposed_joint_task.required_object_key,
+      steps: input.output.proposed_joint_task.steps
+    });
+  }
+
+  const relationship = await applyRelationshipEffects(input.sourceAgentId, input.targetAgentId, input.output.relationship_effects);
+  await createRelationshipEvent({
+    worldId: input.worldId,
+    sourceAgentId: input.sourceAgentId,
+    targetAgentId: input.targetAgentId,
+    tickId: input.tickId,
+    eventType: (input.output.relationship_effects.trust ?? 0) > 0
+      ? "trust_gain"
+      : (input.output.relationship_effects.tension ?? 0) > 0
+        ? "tension_gain"
+        : "cooperation",
+    summary: relationship ? `${relationship.relationship_type}: social turn affected relationship.` : "Social turn recorded.",
+    effects: input.output.relationship_effects
+  });
+}
+
+async function maybeRunSocialInteraction(input: {
+  world: World;
+  actingAgent: Agent;
+  actingStats: import("@/lib/world/state").AgentStats;
+  actionType: string;
+  actionEffects: Record<string, unknown>;
+  recentAction: Record<string, unknown>;
+  tickId: string;
+  chatId: string | null;
+  events: WorldEvent[];
+}) {
+  try {
+    if (!input.chatId) return;
+
+    const agents = await loadActiveAgents(input.world.id);
+    const targetAgent = agents.find((agent) => agent.id !== input.actingAgent.id);
+    if (!targetAgent) return;
+
+    const targetBundle = await loadAgentBundle(targetAgent.id);
+    if (!targetBundle) return;
+
+    const [actingLocation, targetLocation, activeExperiment, openCommitments] = await Promise.all([
+      loadAgentLocation(input.world.id, input.actingAgent.id),
+      loadAgentLocation(input.world.id, targetAgent.id),
+      getActiveExperiment(input.world.id),
+      getOpenCommitments(input.world.id)
+    ]);
+    const sameLocation = Boolean(actingLocation && targetLocation && actingLocation.id === targetLocation.id);
+    await ensureRelationshipPair(input.world.id, input.actingAgent.id, targetAgent.id);
+    const actingToTarget = await loadRelationship(input.actingAgent.id, targetAgent.id);
+    const targetToActing = await loadRelationship(targetAgent.id, input.actingAgent.id);
+    const shouldStart = await shouldTriggerSocialInteraction({
+      worldId: input.world.id,
+      actingAgent: input.actingAgent,
+      targetAgent,
+      actingStats: input.actingStats,
+      targetStats: targetBundle.stats,
+      relationship: actingToTarget,
+      sameLocation,
+      actionType: input.actionType,
+      resourceChanged: hasMeaningfulEffect({ resource_deltas: input.actionEffects.resource_deltas }),
+      meaningfulStateChange: hasMeaningfulEffect(input.actionEffects),
+      activeEvents: input.events,
+      activeExperiment: Boolean(activeExperiment),
+      openCommitments
+    });
+    if (!shouldStart) return;
+
+    const [recentTurns, activeJointTasks, recentObservations] = await Promise.all([
+      getRecentSocialTurns(input.world.id, 8),
+      getActiveJointTasks(input.world.id),
+      sql`
+        select * from agent_observations
+        where world_id = ${input.world.id} and agent_id = ${input.actingAgent.id}
+        order by created_at desc
+        limit 6
+      `
+    ]);
+    const initiation = await generateSocialInitiation({
+      initiatingAgent: input.actingAgent,
+      targetAgent,
+      relationship: actingToTarget,
+      currentLocation: actingLocation,
+      recentAction: input.recentAction,
+      recentObservations: recentObservations as never,
+      openCommitments,
+      activeJointTasks,
+      activeEvents: input.events,
+      activeExperiment,
+      stats: input.actingStats,
+      recentSocialTurns: recentTurns
+    });
+    if (!initiation.should_start || !initiation.public_message.trim()) return;
+
+    const interaction = await createSocialInteraction({
+      worldId: input.world.id,
+      initiatingAgentId: input.actingAgent.id,
+      targetAgentId: targetAgent.id,
+      tickId: input.tickId,
+      interactionType: initiation.interaction_type,
+      topic: initiation.topic,
+      importance: 5
+    });
+    if (!interaction) return;
+
+    const firstTurn = await addSocialTurn({
+      interactionId: interaction.id,
+      worldId: input.world.id,
+      speakerAgentId: input.actingAgent.id,
+      targetAgentId: targetAgent.id,
+      message: initiation.public_message,
+      emotionalTone: initiation.emotional_tone,
+      intent: initiation.intent
+    });
+    await persistSocialArtifacts({
+      worldId: input.world.id,
+      sourceAgentId: input.actingAgent.id,
+      targetAgentId: targetAgent.id,
+      interaction,
+      output: initiation,
+      tickId: input.tickId
+    });
+    const sentFirst = await sendAgentMessage(input.actingAgent, input.chatId, initiation.public_message);
+    await sql`
+      insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+      values (${input.world.id}, ${input.actingAgent.id}, ${input.chatId}, ${String(sentFirst.message_id)}, 'outgoing', 'agent', ${initiation.public_message})
+    `;
+
+    const targetRelationships = await loadRelationshipContext(targetAgent.id);
+    const targetPerception = await loadAgentPerceptionContext(targetAgent.id, input.world.id, targetRelationships);
+    const response = await generateSocialResponse({
+      interaction,
+      lastSocialTurn: firstTurn,
+      targetAgent,
+      relationship: targetToActing,
+      targetPerception,
+      openCommitments,
+      activeJointTasks,
+      stats: targetBundle.stats,
+      activeEvents: input.events
+    });
+    if (response.should_respond && response.public_message.trim()) {
+      await addSocialTurn({
+        interactionId: interaction.id,
+        worldId: input.world.id,
+        speakerAgentId: targetAgent.id,
+        targetAgentId: input.actingAgent.id,
+        message: response.public_message,
+        emotionalTone: response.emotional_tone,
+        intent: response.intent
+      });
+      await persistSocialArtifacts({
+        worldId: input.world.id,
+        sourceAgentId: targetAgent.id,
+        targetAgentId: input.actingAgent.id,
+        interaction,
+        output: response,
+        tickId: input.tickId
+      });
+      const sentSecond = await sendAgentMessage(targetAgent, input.chatId, response.public_message);
+      await sql`
+        insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+        values (${input.world.id}, ${targetAgent.id}, ${input.chatId}, ${String(sentSecond.message_id)}, 'outgoing', 'agent', ${response.public_message})
+      `;
+    }
+
+    if (response?.resolve_interaction) {
+      await resolveSocialInteraction(interaction.id);
+    }
+  } catch (error) {
+    await sql`
+      insert into audit_logs (world_id, actor_type, actor_id, action, payload)
+      values (${input.world.id}, 'system', ${input.actingAgent.id}, 'social_interaction_failed', ${JSON.stringify({ error: error instanceof Error ? error.message : "Unknown social error" })})
     `;
   }
 }

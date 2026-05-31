@@ -6,6 +6,7 @@ import { agentTickOutputSchema, type AgentTickOutput } from "@/lib/ai/schemas";
 import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import type { AgentPerceptionContext } from "@/lib/world/perception";
 import type { formatLocationContext } from "@/lib/world/map";
+import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
 
 type GenerateTickInput = {
   world: World;
@@ -17,6 +18,13 @@ type GenerateTickInput = {
   phase: string;
   perception?: AgentPerceptionContext;
   embodiedContext?: ReturnType<typeof formatLocationContext> | null;
+  socialContext?: {
+    activeInteractions: SocialInteraction[];
+    recentSocialTurns: SocialTurn[];
+    openCommitments: AgentCommitment[];
+    activeJointTasks: JointTask[];
+    recentRelationshipEvents: RelationshipEvent[];
+  };
 };
 
 export async function generateAgentTick(input: GenerateTickInput): Promise<AgentTickOutput> {

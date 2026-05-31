@@ -14,6 +14,9 @@ import {
   formatExperimentStarted,
   formatLatestBehaviorScores,
   formatObjectList,
+  formatCommitments,
+  formatJointTasks,
+  formatSocialSummary,
   formatStateMessage,
   formatWorldMap,
   formatWorldMessage
@@ -72,6 +75,18 @@ import {
   setAgentLocation
 } from "@/lib/world/map";
 import { applyInteractionStats, executeWorldInteraction } from "@/lib/world/interactions";
+import {
+  addSocialTurn,
+  createCommitment,
+  createJointTask,
+  createSocialInteraction,
+  getActiveJointTasks,
+  getActiveSocialInteractions,
+  getOpenCommitments,
+  getRecentSocialTurns,
+  resolveSocialInteraction
+} from "@/lib/world/social";
+import { generateSocialInitiation, generateSocialResponse } from "@/lib/ai/social-interaction";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -276,6 +291,159 @@ async function runCommandInteraction(input: {
   await replyAndLog(input.ctx, formatInteractionResult(agent.name, result), bundle.world.id, agent.id);
 }
 
+async function persistCommandSocialArtifacts(input: {
+  worldId: string;
+  sourceAgentId: string;
+  targetAgentId: string;
+  interactionId: string;
+  output: {
+    proposed_commitment: { commitment_type: string; content: string; due_tick: number | null } | null;
+    proposed_joint_task: { title: string; description: string; required_location_key: string | null; required_object_key: string | null; steps: Array<Record<string, unknown>> } | null;
+  };
+}) {
+  if (input.output.proposed_commitment) {
+    await createCommitment({
+      worldId: input.worldId,
+      agentId: input.sourceAgentId,
+      targetAgentId: input.targetAgentId,
+      interactionId: input.interactionId,
+      commitmentType: input.output.proposed_commitment.commitment_type,
+      content: input.output.proposed_commitment.content,
+      dueTick: input.output.proposed_commitment.due_tick,
+      force: true
+    });
+  }
+  if (input.output.proposed_joint_task) {
+    await createJointTask({
+      worldId: input.worldId,
+      title: input.output.proposed_joint_task.title,
+      description: input.output.proposed_joint_task.description,
+      createdByAgentId: input.sourceAgentId,
+      assignedAgentIds: [input.sourceAgentId, input.targetAgentId],
+      requiredLocationKey: input.output.proposed_joint_task.required_location_key,
+      requiredObjectKey: input.output.proposed_joint_task.required_object_key,
+      steps: input.output.proposed_joint_task.steps,
+      force: true
+    });
+  }
+}
+
+async function forceSocialScene(input: {
+  ctx: Context;
+  sourceKey: string;
+  targetKey: string;
+  topic: string;
+  nudgeOnly?: boolean;
+}) {
+  const bundle = await loadWorldBundle();
+  if (!bundle) return replyAndLog(input.ctx, "No world exists yet.");
+  const source = await loadAgentByKey(bundle.world.id, input.sourceKey);
+  const target = await loadAgentByKey(bundle.world.id, input.targetKey);
+  if (!source || !target) return replyAndLog(input.ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+  const sourceBundle = await loadAgentBundle(source.id);
+  const targetBundle = await loadAgentBundle(target.id);
+  if (!sourceBundle || !targetBundle) return replyAndLog(input.ctx, "Could not load both agents.", bundle.world.id, bundle.agent.id);
+
+  const [relationship, location, observations, commitments, jointTasks, recentTurns] = await Promise.all([
+    loadRelationshipContext(source.id).then((rows) => rows.find((row) => row.target_agent_id === target.id) ?? null),
+    loadAgentLocation(bundle.world.id, source.id),
+    loadRecentObservationsByAgent(bundle.world.id, source.agent_key ?? undefined),
+    getOpenCommitments(bundle.world.id),
+    getActiveJointTasks(bundle.world.id),
+    getRecentSocialTurns(bundle.world.id, 8)
+  ]);
+  const start = await generateSocialInitiation({
+    initiatingAgent: source,
+    targetAgent: target,
+    relationship,
+    currentLocation: location,
+    recentAction: { forced_topic: input.topic },
+    recentObservations: observations,
+    openCommitments: commitments,
+    activeJointTasks: jointTasks,
+    activeEvents: bundle.events,
+    activeExperiment: await getActiveExperiment(bundle.world.id),
+    stats: sourceBundle.stats,
+    recentSocialTurns: recentTurns,
+    forcedTopic: input.topic
+  });
+  if (!start.should_start || !start.public_message.trim()) {
+    return replyAndLog(input.ctx, input.nudgeOnly ? "No social interaction started." : "The agent did not produce a social turn.", bundle.world.id, source.id);
+  }
+  const interaction = await createSocialInteraction({
+    worldId: bundle.world.id,
+    initiatingAgentId: source.id,
+    targetAgentId: target.id,
+    interactionType: start.interaction_type,
+    topic: start.topic || input.topic,
+    force: true
+  });
+  if (!interaction) return replyAndLog(input.ctx, "Could not create social interaction.", bundle.world.id, source.id);
+  const firstTurn = await addSocialTurn({
+    interactionId: interaction.id,
+    worldId: bundle.world.id,
+    speakerAgentId: source.id,
+    targetAgentId: target.id,
+    message: start.public_message,
+    emotionalTone: start.emotional_tone,
+    intent: start.intent
+  });
+  await persistCommandSocialArtifacts({
+    worldId: bundle.world.id,
+    sourceAgentId: source.id,
+    targetAgentId: target.id,
+    interactionId: interaction.id,
+    output: start
+  });
+  if (bundle.world.telegram_chat_id) {
+    const sent = await sendAgentMessage(source, bundle.world.telegram_chat_id, start.public_message);
+    await sql`
+      insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+      values (${bundle.world.id}, ${source.id}, ${bundle.world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${start.public_message})
+    `;
+  }
+
+  const targetRelationships = await loadRelationshipContext(target.id);
+  const targetPerception = await loadAgentPerceptionContext(target.id, bundle.world.id, targetRelationships);
+  const response = await generateSocialResponse({
+    interaction,
+    lastSocialTurn: firstTurn,
+    targetAgent: target,
+    relationship: targetRelationships.find((row) => row.target_agent_id === source.id) ?? null,
+    targetPerception,
+    openCommitments: commitments,
+    activeJointTasks: jointTasks,
+    stats: targetBundle.stats,
+    activeEvents: bundle.events
+  });
+  if (response.should_respond && response.public_message.trim()) {
+    await addSocialTurn({
+      interactionId: interaction.id,
+      worldId: bundle.world.id,
+      speakerAgentId: target.id,
+      targetAgentId: source.id,
+      message: response.public_message,
+      emotionalTone: response.emotional_tone,
+      intent: response.intent
+    });
+    await persistCommandSocialArtifacts({
+      worldId: bundle.world.id,
+      sourceAgentId: target.id,
+      targetAgentId: source.id,
+      interactionId: interaction.id,
+      output: response
+    });
+    if (bundle.world.telegram_chat_id) {
+      const sent = await sendAgentMessage(target, bundle.world.telegram_chat_id, response.public_message);
+      await sql`
+        insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+        values (${bundle.world.id}, ${target.id}, ${bundle.world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${response.public_message})
+      `;
+    }
+  }
+  if (response.resolve_interaction) await resolveSocialInteraction(interaction.id);
+}
+
 export function registerCommands(bot: Bot) {
   bot.use(async (ctx, next) => {
     if (ctx.message?.text) await saveIncoming(ctx);
@@ -324,6 +492,13 @@ export function registerCommands(bot: Bot) {
       "/agents",
       "/relationships",
       "/relationship <agentA> <agentB>",
+      "/social",
+      "/talk <agentA> <agentB> <topic>",
+      "/ask_pair <agentA> <agentB> <question>",
+      "/commitments",
+      "/joint_tasks",
+      "/resolve_social <interaction_id>",
+      "/nudge_social <agentA> <agentB> <topic>",
       "/tick_agent <agent_key>",
       "/ask_agent <agent_key> <message>",
       "/observations [agent_key]",
@@ -590,6 +765,103 @@ export function registerCommands(bot: Bot) {
       `Fear: ${relationship.fear}`,
       `Type: ${relationship.relationship_type}`
     ].join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("social", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [interactions, commitments, jointTasks] = await Promise.all([
+      getActiveSocialInteractions(bundle.world.id),
+      getOpenCommitments(bundle.world.id),
+      getActiveJointTasks(bundle.world.id)
+    ]);
+    await replyAndLog(ctx, formatSocialSummary({ interactions, commitments, jointTasks }), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("talk", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentA, agentB, ...topicParts] = getArgs(ctx).split(/\s+/);
+    const topic = topicParts.join(" ");
+    if (!agentA || !agentB || !topic) return ctx.reply("Usage: /talk <agentA> <agentB> <topic>");
+    await forceSocialScene({ ctx, sourceKey: agentA, targetKey: agentB, topic });
+  });
+
+  bot.command("nudge_social", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentA, agentB, ...topicParts] = getArgs(ctx).split(/\s+/);
+    const topic = topicParts.join(" ");
+    if (!agentA || !agentB || !topic) return ctx.reply("Usage: /nudge_social <agentA> <agentB> <topic>");
+    await forceSocialScene({ ctx, sourceKey: agentA, targetKey: agentB, topic, nudgeOnly: true });
+  });
+
+  bot.command("ask_pair", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [agentAKey, agentBKey, ...questionParts] = getArgs(ctx).split(/\s+/);
+    const question = questionParts.join(" ");
+    if (!agentAKey || !agentBKey || !question) return replyAndLog(ctx, "Usage: /ask_pair <agentA> <agentB> <question>", bundle.world.id, bundle.agent.id);
+    for (const agentKey of [agentAKey, agentBKey]) {
+      const agent = await loadAgentByKey(bundle.world.id, agentKey);
+      if (!agent) {
+        await replyAndLog(ctx, `Unknown agent key: ${agentKey}`, bundle.world.id, bundle.agent.id);
+        continue;
+      }
+      const agentBundle = await loadAgentBundle(agent.id);
+      if (!agentBundle) continue;
+      const relationships = await loadRelationshipContext(agent.id);
+      const answer = await generateAgentAnswer({
+        world: bundle.world,
+        agent,
+        stats: agentBundle.stats,
+        worldState: bundle.worldState,
+        memories: agentBundle.memories,
+        events: bundle.events,
+        relationships,
+        question
+      });
+      if (bundle.world.telegram_chat_id) {
+        const sent = await sendAgentMessage(agent, bundle.world.telegram_chat_id, answer.public_message);
+        await sql`
+          insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+          values (${bundle.world.id}, ${agent.id}, ${bundle.world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${answer.public_message})
+        `;
+      }
+    }
+  });
+
+  bot.command("commitments", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    await replyAndLog(ctx, formatCommitments(await getOpenCommitments(bundle.world.id)), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("joint_tasks", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    await replyAndLog(ctx, formatJointTasks(await getActiveJointTasks(bundle.world.id)), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("resolve_social", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const idPrefix = getArgs(ctx);
+    if (!idPrefix) return replyAndLog(ctx, "Usage: /resolve_social <interaction_id>", bundle.world.id, bundle.agent.id);
+    const [interaction] = await sql`
+      select id from agent_social_interactions
+      where world_id = ${bundle.world.id}
+        and status = 'active'
+        and id::text like ${`${idPrefix}%`}
+      order by created_at desc
+      limit 1
+    `;
+    if (!interaction) return replyAndLog(ctx, "No active social interaction matched that id.", bundle.world.id, bundle.agent.id);
+    await resolveSocialInteraction(String(interaction.id));
+    await replyAndLog(ctx, `Resolved social interaction ${String(interaction.id).slice(0, 8)}.`, bundle.world.id, bundle.agent.id);
   });
 
   bot.command("tick_agent", async (ctx) => {

@@ -60,6 +60,33 @@ export async function processExperimentAfterTick(input: {
       where tick_id = ${input.tickId}
       order by created_at asc
     `;
+    const socialTurns = await sql`
+      select ast.message, ast.emotional_tone, ast.intent, speaker.name as speaker_name, target.name as target_name
+      from agent_social_turns ast
+      left join agents speaker on speaker.id = ast.speaker_agent_id
+      left join agents target on target.id = ast.target_agent_id
+      where ast.world_id = ${input.world.id}
+        and ast.created_at >= (select created_at from ticks where id = ${input.tickId})
+      order by ast.created_at asc
+    `;
+    const commitments = await sql`
+      select commitment_type, content, status from agent_commitments
+      where world_id = ${input.world.id}
+      order by created_at desc
+      limit 8
+    `;
+    const jointTasks = await sql`
+      select title, description, status, required_location_key, required_object_key from joint_tasks
+      where world_id = ${input.world.id}
+      order by created_at desc
+      limit 5
+    `;
+    const relationshipEvents = await sql`
+      select event_type, summary, effects from relationship_events
+      where world_id = ${input.world.id}
+      order by created_at desc
+      limit 8
+    `;
 
     const evaluation = await evaluateBehavior({
       world: input.world,
@@ -75,6 +102,10 @@ export async function processExperimentAfterTick(input: {
       recentMemories: input.memories,
       activeEvents: input.events,
       observations,
+      socialTurns,
+      commitments,
+      jointTasks,
+      relationshipEvents,
       soulEntries: soulEntries.map((entry) => String(entry.content)),
       constitutionArticles: constitutionArticles as Array<{ article_number: number; title: string; body: string }>
     });

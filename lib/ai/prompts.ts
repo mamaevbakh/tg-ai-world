@@ -1,6 +1,7 @@
 import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import type { AgentPerceptionContext } from "@/lib/world/perception";
 import type { formatLocationContext } from "@/lib/world/map";
+import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
 
 type PromptInput = {
   world: World;
@@ -12,6 +13,13 @@ type PromptInput = {
   phase: string;
   perception?: AgentPerceptionContext;
   embodiedContext?: ReturnType<typeof formatLocationContext> | null;
+  socialContext?: {
+    activeInteractions: SocialInteraction[];
+    recentSocialTurns: SocialTurn[];
+    openCommitments: AgentCommitment[];
+    activeJointTasks: JointTask[];
+    recentRelationshipEvents: RelationshipEvent[];
+  };
 };
 
 export function buildAgentTickPrompt(input: PromptInput): string {
@@ -46,6 +54,10 @@ Public message style:
 - Do not assume another agent's motives with certainty. You may form hypotheses, but mark them as uncertain.
 - Avoid repeating the same sensory detail unless it changed. If the same issue appears again, say what is different now or what you still do not understand.
 - You may notice details another agent missed, disagree with another interpretation, or ask another inhabitant to verify something.
+- You are not alone in the world. Other inhabitants have their own needs, memories, fear, and limited perception.
+- You may ask for help, offer help, warn, disagree, comfort, promise, refuse, propose a joint task, clarify, or apologize.
+- Do not speak for another agent, make promises casually, create endless conversation, or repeat the same social topic unless something changed.
+- If you make a concrete promise, it must be represented in the structured social system by a later social interaction.
 - Bad: "If anyone has ideas about makeshift insulation, tell me and I'll try them next."
 - Better: "I wish I knew more about insulation. For now, I'll mark the coldest seams and test what the toolkit can do before evening."
 
@@ -110,6 +122,9 @@ ${JSON.stringify(input.perception ?? null, null, 2)}
 
 Embodied world context:
 ${JSON.stringify(input.embodiedContext ?? null, null, 2)}
+
+Social context:
+${JSON.stringify(input.socialContext ?? null, null, 2)}
 
 Make public_message short, atmospheric, and readable in Telegram: 1 to 5 short paragraphs.`;
 }

@@ -2,6 +2,7 @@ import type { AgentStats, World, WorldEvent, WorldState } from "@/lib/world/stat
 import type { BehaviorEvaluation, ExperimentReport, ExperimentTemplateRow, WorldExperiment } from "@/lib/experiments/service";
 import type { InventoryItem, WorldExit, WorldLocation, WorldObject } from "@/lib/world/map";
 import type { WorldInteractionResult } from "@/lib/world/interactions";
+import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction } from "@/lib/world/social";
 
 type Phase = "morning" | "day" | "evening" | "night";
 
@@ -331,4 +332,81 @@ export function formatInteractionResult(agentName: string, result: WorldInteract
     result.feedback,
     stats ? ["", stats].join("\n") : null
   ].filter(Boolean).join("\n");
+}
+
+export function formatSocialSummary(input: {
+  interactions: SocialInteraction[];
+  commitments: AgentCommitment[];
+  jointTasks: JointTask[];
+}): string {
+  return [
+    "Social State",
+    "",
+    "Active interactions:",
+    input.interactions.length
+      ? input.interactions.map((interaction) => `- ${interaction.initiating_agent_name} ↔ ${interaction.target_agent_name}: ${interaction.interaction_type} - ${interaction.topic}`).join("\n")
+      : "None",
+    "",
+    "Open commitments:",
+    input.commitments.length
+      ? input.commitments.map((commitment) => `- ${commitment.agent_name}: ${commitment.content}`).join("\n")
+      : "None",
+    "",
+    "Joint tasks:",
+    input.jointTasks.length
+      ? input.jointTasks.map((task) => `- ${task.title}\n  Status: ${task.status}`).join("\n")
+      : "None"
+  ].join("\n");
+}
+
+export function formatSocialInteraction(interaction: SocialInteraction): string {
+  return [
+    `${interaction.initiating_agent_name} ↔ ${interaction.target_agent_name}`,
+    `Type: ${interaction.interaction_type}`,
+    `Topic: ${interaction.topic}`,
+    `Status: ${interaction.status}`,
+    `ID: ${interaction.id.slice(0, 8)}`
+  ].join("\n");
+}
+
+export function formatCommitments(commitments: AgentCommitment[]): string {
+  return [
+    "Open commitments",
+    "",
+    commitments.length
+      ? commitments.map((commitment) => [
+        `- ${commitment.agent_name}${commitment.target_agent_name ? ` → ${commitment.target_agent_name}` : ""}`,
+        `  ${commitment.content}`,
+        `  Type: ${commitment.commitment_type}`
+      ].join("\n")).join("\n")
+      : "None"
+  ].join("\n");
+}
+
+export function formatJointTasks(tasks: JointTask[]): string {
+  return [
+    "Joint tasks",
+    "",
+    tasks.length
+      ? tasks.map((task) => [
+        `- ${task.title}`,
+        `  ${task.description}`,
+        `  Status: ${task.status}`,
+        task.required_location_key ? `  Location: ${task.required_location_key}` : null,
+        task.required_object_key ? `  Object: ${task.required_object_key}` : null
+      ].filter(Boolean).join("\n")).join("\n")
+      : "None"
+  ].join("\n");
+}
+
+export function formatRelationshipEvent(event: RelationshipEvent): string {
+  const effects = Object.entries(event.effects ?? {})
+    .filter(([, value]) => Number(value) !== 0)
+    .map(([key, value]) => `${key} ${Number(value) > 0 ? "+" : ""}${value}`)
+    .join(" · ");
+  return [
+    "Relationship event",
+    event.summary,
+    effects || "No relationship change"
+  ].join("\n");
 }
