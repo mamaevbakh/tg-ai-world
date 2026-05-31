@@ -25,10 +25,10 @@ CRON_SECRET="choose-another-long-random-secret"
 APP_URL="https://your-public-app-url.example"
 ```
 
-Run the migration:
+Run migrations:
 
 ```bash
-psql "$DATABASE_URL" -f db/migrations/001_init.sql
+pnpm db:migrate
 ```
 
 Run locally:
@@ -87,6 +87,26 @@ Authorization: Bearer CRON_SECRET
 ```
 
 Paused worlds do not run from cron.
+
+## Neon + GitHub Main
+
+Database changes are synced through migrations, not by copying the database from GitHub.
+
+This repo includes `.github/workflows/migrate-main.yml`. On every push to `main` that changes migration files, GitHub Actions runs:
+
+```bash
+pnpm db:migrate
+```
+
+Add `DATABASE_URL` as a GitHub repository secret:
+
+```text
+GitHub repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+Name: DATABASE_URL
+Value: your Neon pooled connection string
+```
+
+Neon's Vercel integration can also create preview database branches. If you enable that, keep production migrations tied to `main` and use preview branches for PR testing.
 
 ## Telegram Bot-to-Bot Notes
 
