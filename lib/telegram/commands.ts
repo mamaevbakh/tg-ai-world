@@ -22,6 +22,24 @@ import {
   listExperimentTemplates,
   startExperiment
 } from "@/lib/experiments/service";
+import {
+  getActionForTick,
+  getEvaluationForTick,
+  getExperimentReplay,
+  getLatestAction,
+  getLatestCompletedTick,
+  getLatestEvaluation,
+  getLatestExperimentForReplay,
+  getLatestExperimentReportForReplay,
+  getTickByNumber
+} from "@/lib/debug/replay-service";
+import {
+  formatActionDebugMessage,
+  formatEvaluationDetailsMessage,
+  formatExperimentReplayMessage,
+  formatTickDebugMessage,
+  formatWhyScoreMessage
+} from "@/lib/debug/replay-formatting";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -79,6 +97,12 @@ export function registerCommands(bot: Bot) {
       "/cancel_experiment",
       "/scores",
       "/experiment_report",
+      "/last_tick",
+      "/tick_log <tick_number>",
+      "/last_action",
+      "/why_score",
+      "/eval_details",
+      "/replay_experiment",
       "/proposals",
       "/approve_proposal <id>",
       "/reject_proposal <id> <reason>",
@@ -293,6 +317,73 @@ export function registerCommands(bot: Bot) {
       "",
       latest[0] ? `Latest score: ${latest[0].summary}` : "No scores yet."
     ].join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("last_tick", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const tick = await getLatestCompletedTick(bundle.world.id);
+    if (!tick) return replyAndLog(ctx, "No completed ticks yet.", bundle.world.id, bundle.agent.id);
+    const action = await getActionForTick(tick.id);
+    const evaluation = await getEvaluationForTick(tick.id);
+    await replyAndLog(ctx, formatTickDebugMessage({ tick, action, evaluation }), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("tick_log", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const tickNumber = Number(getArgs(ctx));
+    if (!Number.isInteger(tickNumber) || tickNumber < 1) {
+      return replyAndLog(ctx, "Usage: /tick_log <tick_number>", bundle.world.id, bundle.agent.id);
+    }
+    const tick = await getTickByNumber(bundle.world.id, tickNumber);
+    if (!tick) return replyAndLog(ctx, `No tick #${tickNumber}.`, bundle.world.id, bundle.agent.id);
+    const action = await getActionForTick(tick.id);
+    const evaluation = await getEvaluationForTick(tick.id);
+    await replyAndLog(ctx, formatTickDebugMessage({ tick, action, evaluation }), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("last_action", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const action = await getLatestAction(bundle.world.id);
+    await replyAndLog(ctx, formatActionDebugMessage(action), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("why_score", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const evaluation = await getLatestEvaluation(bundle.world.id);
+    await replyAndLog(ctx, formatWhyScoreMessage(evaluation), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("eval_details", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const evaluation = await getLatestEvaluation(bundle.world.id);
+    await replyAndLog(ctx, formatEvaluationDetailsMessage(evaluation), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("replay_experiment", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const experiment = await getLatestExperimentForReplay(bundle.world.id);
+    if (!experiment) return replyAndLog(ctx, "No experiment exists yet.", bundle.world.id, bundle.agent.id);
+    const rows = await getExperimentReplay(experiment.id);
+    const report = await getLatestExperimentReportForReplay(experiment.id);
+    await replyAndLog(ctx, formatExperimentReplayMessage({
+      title: experiment.title,
+      status: experiment.status,
+      progress: `${experiment.current_tick_count} / ${experiment.duration_ticks}`,
+      rows,
+      report
+    }), bundle.world.id, bundle.agent.id);
   });
 
   bot.command("proposals", async (ctx) => {
