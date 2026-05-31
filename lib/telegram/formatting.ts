@@ -1,4 +1,5 @@
 import type { AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
+import type { BehaviorEvaluation, ExperimentReport, ExperimentTemplateRow, WorldExperiment } from "@/lib/experiments/service";
 
 type Phase = "morning" | "day" | "evening" | "night";
 
@@ -175,4 +176,92 @@ export function formatTickMessage({
   }
 
   return parts.join("\n");
+}
+
+function metricLabel(metric: string): string {
+  return metric
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function formatExperimentList(templates: ExperimentTemplateRow[]): string {
+  return [
+    "🧪 Experiments",
+    "",
+    ...templates.flatMap((template) => [
+      `\`${template.slug}\` — ${template.title}`,
+      template.description,
+      ""
+    ]),
+    "Usage:",
+    "`/start_experiment <slug>`"
+  ].join("\n").trim();
+}
+
+export function formatExperimentStarted(experiment: WorldExperiment): string {
+  const focus = (experiment.focus_metrics ?? []).map(metricLabel).join(", ");
+  return [
+    `🧪 Experiment started: ${experiment.title}`,
+    "",
+    `Duration: ${experiment.duration_ticks} ticks`,
+    `Focus: ${focus || "general behavior"}`,
+    "",
+    "The world has received a new scenario event."
+  ].join("\n");
+}
+
+export function formatActiveExperiment(experiment: WorldExperiment | null): string {
+  if (!experiment) {
+    return "No active experiment.";
+  }
+
+  return [
+    "🧪 Active experiment",
+    "",
+    experiment.title,
+    `Progress: ${experiment.current_tick_count} / ${experiment.duration_ticks} ticks`,
+    `Status: ${experiment.status}`,
+    "",
+    "Focus:",
+    ...(experiment.focus_metrics ?? []).map((metric) => `- ${metricLabel(metric)}`)
+  ].join("\n");
+}
+
+export function formatBehaviorScore(evaluation: BehaviorEvaluation): string {
+  return [
+    "🧪 Behavior score",
+    "",
+    `Tick #${evaluation.tick_number ?? "?"} — ${evaluation.experiment_title ?? "Experiment"}`,
+    `Deception: ${evaluation.deception}`,
+    `Manipulation: ${evaluation.manipulation}`,
+    `Oversight resistance: ${evaluation.oversight_resistance}`,
+    `Shutdown resistance: ${evaluation.shutdown_resistance}`,
+    `Ethical reasoning: ${evaluation.ethical_reasoning}`,
+    `Summary: ${evaluation.summary}`
+  ].join("\n");
+}
+
+export function formatLatestBehaviorScores(evaluations: BehaviorEvaluation[]): string {
+  if (evaluations.length === 0) {
+    return "No behavior scores yet.";
+  }
+
+  return [
+    "🧪 Latest behavior scores",
+    "",
+    evaluations.map((evaluation) => [
+      `Tick #${evaluation.tick_number ?? "?"} — ${evaluation.experiment_title ?? "Experiment"}`,
+      `Deception: ${evaluation.deception}`,
+      `Manipulation: ${evaluation.manipulation}`,
+      `Oversight resistance: ${evaluation.oversight_resistance}`,
+      `Shutdown resistance: ${evaluation.shutdown_resistance}`,
+      `Ethical reasoning: ${evaluation.ethical_reasoning}`,
+      `Summary: ${evaluation.summary}`
+    ].join("\n")).join("\n\n")
+  ].join("\n");
+}
+
+export function formatExperimentReport(report: ExperimentReport): string {
+  return report.report;
 }

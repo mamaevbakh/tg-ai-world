@@ -8,7 +8,8 @@ const envSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
   TELEGRAM_ADMIN_IDS: z.string().min(1),
   CRON_SECRET: z.string().min(1),
-  APP_URL: z.url()
+  APP_URL: z.url(),
+  ENABLE_BEHAVIOR_EVALUATOR: z.string().default("true")
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

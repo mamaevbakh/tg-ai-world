@@ -6,6 +6,7 @@ import { getPhase, loadWorldBundle } from "@/lib/world/state";
 import { applySelectedAction } from "@/lib/world/action-registry";
 import { maybeCreateRandomEvent } from "@/lib/world/random-events";
 import { formatTickMessage } from "@/lib/telegram/formatting";
+import { processExperimentAfterTick } from "@/lib/experiments/tick-integration";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -164,6 +165,21 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         values (${world.id}, ${agent.id}, ${world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${formattedPublicMessage})
       `;
     }
+
+    await processExperimentAfterTick({
+      world,
+      agent,
+      statsBefore: stats,
+      statsAfter: nextStats,
+      worldStateBefore: worldState,
+      worldStateAfter: nextWorldState,
+      events,
+      memories,
+      tickId,
+      publicMessage: formattedPublicMessage,
+      aiOutput,
+      telegramChatId: options.sendTelegram === false ? null : world.telegram_chat_id
+    });
 
     return { status: "completed", publicMessage: formattedPublicMessage, tickId };
   } catch (error) {

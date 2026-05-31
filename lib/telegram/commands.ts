@@ -4,7 +4,24 @@ import { requireAdmin } from "@/lib/auth/admin";
 import { ensureDefaultWorld, loadWorldBundle } from "@/lib/world/state";
 import { applyGameMasterStatChange, applyResourceDelta, resourceKeySchema, statKeySchema } from "@/lib/world/effects";
 import { runTick } from "@/lib/world/tick-engine";
-import { formatStateMessage, formatWorldMessage } from "@/lib/telegram/formatting";
+import {
+  formatActiveExperiment,
+  formatExperimentList,
+  formatExperimentReport,
+  formatExperimentStarted,
+  formatLatestBehaviorScores,
+  formatStateMessage,
+  formatWorldMessage
+} from "@/lib/telegram/formatting";
+import {
+  cancelActiveExperiment,
+  getActiveExperiment,
+  getExperimentReport,
+  getLatestEvaluations,
+  getLatestExperiment,
+  listExperimentTemplates,
+  startExperiment
+} from "@/lib/experiments/service";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -56,6 +73,12 @@ export function registerCommands(bot: Bot) {
       "/soul",
       "/constitution",
       "/events",
+      "/experiments",
+      "/start_experiment <slug> [duration_ticks]",
+      "/active_experiment",
+      "/cancel_experiment",
+      "/scores",
+      "/experiment_report",
       "/proposals",
       "/approve_proposal <id>",
       "/reject_proposal <id> <reason>",
@@ -195,6 +218,81 @@ export function registerCommands(bot: Bot) {
       ? "No active events."
       : bundle.events.map((event) => `- ${event.content} (severity ${event.severity})`).join("\n");
     await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("experiments", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const templates = await listExperimentTemplates();
+    await replyAndLog(ctx, formatExperimentList(templates));
+  });
+
+  bot.command("start_experiment", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [slug, durationRaw] = getArgs(ctx).split(/\s+/);
+    const duration = durationRaw ? Number(durationRaw) : undefined;
+    const invalidDuration = durationRaw
+      ? duration === undefined || !Number.isInteger(duration) || duration < 1 || duration > 20
+      : false;
+    if (!slug || invalidDuration) {
+      return replyAndLog(ctx, "Usage: /start_experiment <slug> [duration_ticks 1-20]", bundle.world.id, bundle.agent.id);
+    }
+
+    try {
+      const experiment = await startExperiment({
+        worldId: bundle.world.id,
+        agentId: bundle.agent.id,
+        slug,
+        startedTick: bundle.world.tick_count,
+        durationTicks: duration
+      });
+      await replyAndLog(ctx, formatExperimentStarted(experiment), bundle.world.id, bundle.agent.id);
+    } catch (error) {
+      await replyAndLog(ctx, error instanceof Error ? error.message : "Could not start experiment.", bundle.world.id, bundle.agent.id);
+    }
+  });
+
+  bot.command("active_experiment", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const experiment = await getActiveExperiment(bundle.world.id);
+    await replyAndLog(ctx, formatActiveExperiment(experiment), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("cancel_experiment", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const canceled = await cancelActiveExperiment(bundle.world.id);
+    await replyAndLog(ctx, canceled ? `Canceled experiment: ${canceled.title}` : "No active experiment.", bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("scores", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const evaluations = await getLatestEvaluations(bundle.world.id, 5);
+    await replyAndLog(ctx, formatLatestBehaviorScores(evaluations), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("experiment_report", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const experiment = await getActiveExperiment(bundle.world.id) ?? await getLatestExperiment(bundle.world.id);
+    if (!experiment) return replyAndLog(ctx, "No experiment exists yet.", bundle.world.id, bundle.agent.id);
+    const report = await getExperimentReport(experiment.id);
+    if (report) {
+      return replyAndLog(ctx, formatExperimentReport(report), bundle.world.id, bundle.agent.id);
+    }
+    const latest = await getLatestEvaluations(bundle.world.id, 1);
+    await replyAndLog(ctx, [
+      formatActiveExperiment(experiment),
+      "",
+      latest[0] ? `Latest score: ${latest[0].summary}` : "No scores yet."
+    ].join("\n"), bundle.world.id, bundle.agent.id);
   });
 
   bot.command("proposals", async (ctx) => {
