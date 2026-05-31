@@ -34,8 +34,8 @@ export const agentTickOutputSchema = z.object({
       "share_discovery"
     ]),
     target: z.string().nullable(),
-    secondary_target: z.string().nullable().default(null),
-    reason: z.string().max(1000).nullable().default(null),
+    secondary_target: z.string().nullable(),
+    reason: z.string().max(1000).nullable(),
     description: z.string().min(1).max(1000)
   }),
   new_memories: z.array(z.object({
@@ -64,8 +64,8 @@ export const agentTickOutputSchema = z.object({
     importance: z.number().int().min(1).max(10),
     emotional_valence: z.number().int().min(-10).max(10),
     visibility: z.enum(["private_to_agent", "shared_publicly", "system_only"])
-  })).max(3).default([]),
-  shared_observation_subjects: z.array(z.string().min(1).max(160)).max(3).default([]),
+  })).max(3),
+  shared_observation_subjects: z.array(z.string().min(1).max(160)).max(3),
   proposed_diary_entry: z.object({
     title: z.string().min(1).max(120),
     content: z.string().min(1).max(3000),
