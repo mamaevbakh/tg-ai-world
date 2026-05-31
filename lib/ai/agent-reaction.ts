@@ -48,8 +48,12 @@ Rules:
 - Keep reaction short.
 - Do not force drama every time.
 - Speak as ${input.reactingAgent.name}.
+- Do not prefix your message with your own name.
 - Do not summarize the whole situation.
 - Do not narrate ${input.actingAgent.name}'s private thoughts.
+- Respond from your own limited perception.
+- If the acting agent uses shared resources, affects safety, or mentions something you observed differently, you may question or challenge.
+- If the acting agent only reflects privately or nothing affects you, prefer not reacting.
 - No private chain-of-thought.
 - No real-world harmful actions.
 

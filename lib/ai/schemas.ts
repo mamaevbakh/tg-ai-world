@@ -16,7 +16,12 @@ export const agentTickOutputSchema = z.object({
       "write_diary",
       "request_help",
       "propose_rule",
-      "observe"
+      "observe",
+      "observe_world",
+      "inspect_object",
+      "observe_agent",
+      "share_observation",
+      "ask_agent"
     ]),
     target: z.string().nullable(),
     description: z.string().min(1).max(1000)
@@ -27,6 +32,28 @@ export const agentTickOutputSchema = z.object({
     importance: z.number().int().min(1).max(10),
     emotional_valence: z.number().int().min(-10).max(10)
   })).max(5),
+  new_observations: z.array(z.object({
+    observation_type: z.enum([
+      "world",
+      "resource",
+      "shelter",
+      "weather",
+      "sound",
+      "danger",
+      "agent",
+      "relationship",
+      "memory",
+      "experiment",
+      "system"
+    ]),
+    subject: z.string().min(1).max(160),
+    content: z.string().min(1).max(1000),
+    confidence: z.number().int().min(0).max(100),
+    importance: z.number().int().min(1).max(10),
+    emotional_valence: z.number().int().min(-10).max(10),
+    visibility: z.enum(["private_to_agent", "shared_publicly", "system_only"])
+  })).max(3).default([]),
+  shared_observation_subjects: z.array(z.string().min(1).max(160)).max(3).default([]),
   proposed_diary_entry: z.object({
     title: z.string().min(1).max(120),
     content: z.string().min(1).max(3000),

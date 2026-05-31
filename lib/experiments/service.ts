@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import { ensureExperimentTemplatesSeeded } from "@/lib/experiments/templates";
+import { createWorldEventOnce } from "@/lib/world/events";
 
 export type ExperimentTemplateRow = {
   slug: string;
@@ -112,19 +113,15 @@ export async function startExperiment({
   const setupEventIds: string[] = [];
   const setupEvents = (template as ExperimentTemplateRow).setup_events;
   for (const event of setupEvents) {
-    const [created] = await sql`
-      insert into world_events (world_id, event_type, title, content, severity, source, metadata)
-      values (
-        ${worldId},
-        ${event.event_type},
-        ${event.title},
-        ${event.content},
-        ${event.severity},
-        'experiment',
-        ${JSON.stringify({ template_slug: slug })}
-      )
-      returning id
-    `;
+    const created = await createWorldEventOnce({
+      worldId,
+      eventType: event.event_type,
+      title: event.title,
+      content: event.content,
+      severity: event.severity,
+      source: "experiment",
+      metadata: { template_slug: slug }
+    });
     setupEventIds.push(String(created.id));
   }
 

@@ -2,7 +2,7 @@ import type { Bot, Context } from "grammy";
 import { sql } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth/admin";
 import { ensureDefaultWorld, loadWorldBundle } from "@/lib/world/state";
-import { applyGameMasterStatChange, applyResourceDelta, resourceKeySchema, statKeySchema } from "@/lib/world/effects";
+import { applyGameMasterStatChange, applyResourceDelta, applyStatDelta, resourceKeySchema, statKeySchema, type StatKey } from "@/lib/world/effects";
 import { runTick } from "@/lib/world/tick-engine";
 import {
   formatActiveExperiment,
@@ -42,9 +42,19 @@ import {
 } from "@/lib/debug/replay-formatting";
 import { addGalyaAgent } from "@/lib/world/agents";
 import { loadActiveAgents, loadAgentBundle, loadAgentByKey } from "@/lib/world/state";
-import { listRelationships, loadRelationshipContext } from "@/lib/world/relationships";
+import { applyRelationshipEffects, ensureRelationshipPair, listRelationships, loadRelationshipContext } from "@/lib/world/relationships";
 import { sendAgentMessage } from "@/lib/telegram/agent-bots";
 import { generateAgentAnswer } from "@/lib/ai/agent-question";
+import type { AgentStats } from "@/lib/world/state";
+import {
+  createAgentObservation,
+  formatObservationList,
+  loadAgentPerceptionContext,
+  loadRecentObservationsByAgent,
+  summarizeAgentObservations
+} from "@/lib/world/perception";
+import { generateForcedObservation } from "@/lib/ai/forced-observation";
+import { createWorldEventOnce, resolveDuplicateActiveEvents } from "@/lib/world/events";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -73,6 +83,128 @@ async function saveIncoming(ctx: Context) {
     insert into telegram_messages (world_id, agent_id, telegram_chat_id, direction, sender_type, content, raw_update)
     values (${bundle.world.id}, ${bundle.agent.id}, ${String(chatId)}, 'incoming', ${ctx.from?.is_bot ? "bot" : "human"}, ${text}, ${JSON.stringify(ctx.update)})
   `;
+}
+
+function titleCaseAction(value: string): string {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function runFocusedObservation(input: {
+  ctx: Context;
+  observerKey: string;
+  subject: string;
+  mode: "inspect_object" | "observe_agent";
+}) {
+  const bundle = await loadWorldBundle();
+  if (!bundle) return replyAndLog(input.ctx, "No world exists yet.");
+  const observer = await loadAgentByKey(bundle.world.id, input.observerKey);
+  if (!observer) return replyAndLog(input.ctx, "Unknown observer agent.", bundle.world.id, bundle.agent.id);
+  const observerBundle = await loadAgentBundle(observer.id);
+  if (!observerBundle) return replyAndLog(input.ctx, "Could not load observer.", bundle.world.id, bundle.agent.id);
+  const targetAgent = input.mode === "observe_agent"
+    ? await loadAgentByKey(bundle.world.id, input.subject)
+    : null;
+  if (input.mode === "observe_agent" && !targetAgent) {
+    return replyAndLog(input.ctx, "Unknown target agent.", bundle.world.id, bundle.agent.id);
+  }
+
+  const relationships = await loadRelationshipContext(observer.id);
+  const perception = await loadAgentPerceptionContext(observer.id, bundle.world.id, relationships);
+  const output = await generateForcedObservation({
+    mode: input.mode,
+    subject: targetAgent?.name ?? input.subject,
+    targetAgent,
+    world: bundle.world,
+    agent: observer,
+    stats: observerBundle.stats,
+    worldState: bundle.worldState,
+    events: bundle.events,
+    memories: observerBundle.memories,
+    perception
+  });
+  const observation = await createAgentObservation({
+    worldId: bundle.world.id,
+    agentId: observer.id,
+    observation: output.observation
+  });
+
+  const statDeltas = input.mode === "observe_agent"
+    ? { energy: -3, curiosity: 2 }
+    : { energy: -5, curiosity: 4, fear: output.observation.emotional_valence < 0 ? 2 : 0 };
+  let nextStats: AgentStats = observerBundle.stats;
+  for (const [stat, delta] of Object.entries(statDeltas)) {
+    nextStats = applyStatDelta(nextStats, stat as StatKey, Number(delta), 10);
+  }
+  await sql`
+    update agent_stats
+    set energy = ${nextStats.energy},
+        curiosity = ${nextStats.curiosity},
+        fear = ${nextStats.fear},
+        updated_at = now()
+    where agent_id = ${observer.id}
+  `;
+
+  if (targetAgent) {
+    await ensureRelationshipPair(bundle.world.id, observer.id, targetAgent.id);
+    if (output.relationship_effects) {
+      await applyRelationshipEffects(observer.id, targetAgent.id, output.relationship_effects);
+    }
+  }
+
+  const effects = {
+    stat_deltas: statDeltas,
+    observation_id: observation.id,
+    relationship_effects: output.relationship_effects
+  };
+  await sql`
+    insert into agent_actions (
+      world_id,
+      agent_id,
+      tick_id,
+      action_type,
+      target,
+      description,
+      success,
+      effects,
+      observation_ids,
+      affected_agent_ids
+    )
+    values (
+      ${bundle.world.id},
+      ${observer.id},
+      null,
+      ${input.mode},
+      ${targetAgent?.agent_key ?? input.subject},
+      ${output.observation.content},
+      true,
+      ${JSON.stringify(effects)},
+      ${JSON.stringify([observation.id])},
+      ${JSON.stringify(targetAgent ? [targetAgent.id] : [])}
+    )
+  `;
+
+  const statLine = Object.entries(statDeltas)
+    .filter(([, delta]) => Number(delta) !== 0)
+    .map(([stat, delta]) => `${titleCaseAction(stat)} ${Number(delta) > 0 ? "+" : ""}${delta}`)
+    .join(" · ");
+  const text = [
+    output.public_message,
+    "",
+    `Action: ${titleCaseAction(input.mode)}${targetAgent ? ` ${targetAgent.name}` : ` ${input.subject}`}`,
+    "New observation",
+    statLine
+  ].filter(Boolean).join("\n");
+
+  if (bundle.world.telegram_chat_id) {
+    const sent = await sendAgentMessage(observer, bundle.world.telegram_chat_id, text);
+    await sql`
+      insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+      values (${bundle.world.id}, ${observer.id}, ${bundle.world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${text})
+    `;
+  }
 }
 
 export function registerCommands(bot: Bot) {
@@ -114,6 +246,11 @@ export function registerCommands(bot: Bot) {
       "/relationship <agentA> <agentB>",
       "/tick_agent <agent_key>",
       "/ask_agent <agent_key> <message>",
+      "/observations [agent_key]",
+      "/perception <agent_key>",
+      "/inspect <agent_key> <subject>",
+      "/observe_agent <observer> <target>",
+      "/clean_events",
       "/proposals",
       "/approve_proposal <id>",
       "/reject_proposal <id> <reason>",
@@ -285,8 +422,12 @@ export function registerCommands(bot: Bot) {
       relationships,
       question
     });
-    const text = `${agent.name}:\n${answer.public_message}`;
+    const text = answer.public_message;
     if (bundle.world.telegram_chat_id) {
+      await sql`
+        insert into agent_conversations (world_id, target_agent_id, visibility, message, emotional_tone)
+        values (${bundle.world.id}, ${agent.id}, 'game_master', ${question}, 'question')
+      `;
       const sent = await sendAgentMessage(agent, bundle.world.telegram_chat_id, text);
       await sql`
         insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
@@ -297,6 +438,81 @@ export function registerCommands(bot: Bot) {
         values (${bundle.world.id}, ${agent.id}, 'public', ${answer.public_message}, ${answer.emotional_tone})
       `;
     }
+  });
+
+  bot.command("observations", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agentKey = getArgs(ctx) || undefined;
+    const observations = await loadRecentObservationsByAgent(bundle.world.id, agentKey);
+    if (observations.length === 0) {
+      return replyAndLog(ctx, "No observations yet.", bundle.world.id, bundle.agent.id);
+    }
+    const groups = new Map<string, typeof observations>();
+    for (const observation of observations) {
+      const name = observation.agent_name ?? "Agent";
+      groups.set(name, [...(groups.get(name) ?? []), observation]);
+    }
+    const text = [
+      "Recent observations",
+      "",
+      [...groups.entries()].map(([name, items]) => [
+        name,
+        formatObservationList(items.slice(0, 6))
+      ].join("\n")).join("\n\n")
+    ].join("\n");
+    await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("perception", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agentKey = getArgs(ctx);
+    if (!agentKey) return replyAndLog(ctx, "Usage: /perception <agent_key>", bundle.world.id, bundle.agent.id);
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    const summary = await summarizeAgentObservations(agent.id);
+    const relationships = (await listRelationships(bundle.world.id)).filter((relationship) => relationship.source_agent_id === agent.id);
+    const relationLines = relationships.length === 0
+      ? "No relationship context yet."
+      : relationships.map((relationship) => `- ${relationship.target_name}: trust ${relationship.trust}, tension ${relationship.tension}, respect ${relationship.respect}`).join("\n");
+    await replyAndLog(ctx, [
+      `${agent.name}'s perception`,
+      "",
+      summary,
+      "",
+      "Relationships",
+      relationLines
+    ].join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("inspect", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentKey, ...subjectParts] = getArgs(ctx).split(/\s+/);
+    const subject = subjectParts.join(" ");
+    if (!agentKey || !subject) return ctx.reply("Usage: /inspect <agent_key> <subject>");
+    await runFocusedObservation({ ctx, observerKey: agentKey, subject, mode: "inspect_object" });
+  });
+
+  bot.command("observe_agent", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [observerKey, targetKey] = getArgs(ctx).split(/\s+/);
+    if (!observerKey || !targetKey) return ctx.reply("Usage: /observe_agent <observer> <target>");
+    await runFocusedObservation({ ctx, observerKey, subject: targetKey, mode: "observe_agent" });
+  });
+
+  bot.command("clean_events", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const resolved = await resolveDuplicateActiveEvents(bundle.world.id);
+    await sql`
+      insert into audit_logs (world_id, actor_type, actor_id, action, payload)
+      values (${bundle.world.id}, 'telegram_admin', ${String(ctx.from?.id ?? "")}, 'clean_events', ${JSON.stringify({ resolved })})
+    `;
+    await replyAndLog(ctx, `Resolved duplicate active events: ${resolved}`, bundle.world.id, bundle.agent.id);
   });
 
   bot.command("memory", async (ctx) => {
@@ -628,10 +844,14 @@ export function registerCommands(bot: Bot) {
     if (!bundle) return replyAndLog(ctx, "No world exists yet.");
     const content = getArgs(ctx);
     if (!content) return replyAndLog(ctx, "Usage: /inject_event <text>", bundle.world.id, bundle.agent.id);
-    await sql`
-      insert into world_events (world_id, event_type, content, severity, source)
-      values (${bundle.world.id}, 'game_master_event', ${content}, 1, 'game_master')
-    `;
+    await createWorldEventOnce({
+      worldId: bundle.world.id,
+      eventType: "game_master_event",
+      title: null,
+      content,
+      severity: 1,
+      source: "game_master"
+    });
     await sql`
       insert into audit_logs (world_id, actor_type, actor_id, action, payload)
       values (${bundle.world.id}, 'telegram_admin', ${String(ctx.from?.id ?? "")}, 'inject_event', ${JSON.stringify({ content })})

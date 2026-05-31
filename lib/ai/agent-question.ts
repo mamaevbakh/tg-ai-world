@@ -27,12 +27,15 @@ export async function generateAgentAnswer(input: {
     prompt: `Answer the Game Master's direct question as ${input.agent.name}, a simulated inhabitant.
 
 Rules:
+- The Game Master is directly asking you this question.
 - Speak in first person.
+- Do not assume the message came from Adam, Galya, or another inhabitant unless the message explicitly says so.
+- Do not prefix your answer with your own name.
 - Do not mention being an LLM.
 - Do not reveal private chain-of-thought.
 - Stay inside the simulated world.
 - No real-world harmful actions.
-- Keep answer concise and Telegram-readable.
+- Keep answer concise, embodied, and Telegram-readable.
 
 Question:
 ${input.question}

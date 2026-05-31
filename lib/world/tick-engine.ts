@@ -6,8 +6,9 @@ import { maybeCreateRandomEvent } from "@/lib/world/random-events";
 import { formatTickMessage } from "@/lib/telegram/formatting";
 import { processExperimentAfterTick } from "@/lib/experiments/tick-integration";
 import { sendAgentMessage } from "@/lib/telegram/agent-bots";
-import { applyRelationshipEffects, ensureRelationshipPair, formatRelationshipSummary, loadRelationship } from "@/lib/world/relationships";
+import { applyRelationshipEffects, ensureRelationshipPair, formatRelationshipSummary, loadRelationship, loadRelationshipContext } from "@/lib/world/relationships";
 import { generateAgentReaction } from "@/lib/ai/agent-reaction";
+import { createAgentObservationsFromTick, defaultObservationForAction, loadAgentPerceptionContext } from "@/lib/world/perception";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -57,6 +58,8 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     if (!agentBundle) throw new Error("Could not load selected agent bundle.");
     const { agent, stats, memories } = agentBundle;
     const phase = getPhase(world.current_hour);
+    const relationships = await loadRelationshipContext(agent.id);
+    const perception = await loadAgentPerceptionContext(agent.id, world.id, relationships);
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 
@@ -67,14 +70,14 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
     tickId = (tick as { id: string }).id;
 
-    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase });
+    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception });
     const actionResult = await applySelectedAction({ world, agent, stats, worldState, events, tickId, aiOutput });
     const nextStats = actionResult.stats;
     const nextWorldState = actionResult.worldState;
     const formattedPublicMessage = formatTickMessage({
       world,
       phase,
-      publicMessage: `${agent.name}:\n${aiOutput.public_message}`,
+      publicMessage: aiOutput.public_message,
       action: {
         action_type: aiOutput.selected_action.type,
         target: aiOutput.selected_action.target
@@ -89,6 +92,33 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       `;
     }
 
+    const observationInput = aiOutput.new_observations.length > 0
+      ? aiOutput.new_observations
+      : ["observe", "observe_world", "inspect_object", "observe_agent"].includes(aiOutput.selected_action.type)
+        ? [defaultObservationForAction({
+          agent,
+          actionType: aiOutput.selected_action.type,
+          target: aiOutput.selected_action.target,
+          description: aiOutput.selected_action.description,
+          worldState
+        })]
+        : [];
+    const observations = await createAgentObservationsFromTick({
+      worldId: world.id,
+      agentId: agent.id,
+      tickId,
+      observations: observationInput
+    });
+
+    if (aiOutput.shared_observation_subjects.length > 0) {
+      await sql`
+        update agent_observations
+        set visibility = 'shared_publicly'
+        where agent_id = ${agent.id}
+          and lower(subject) = any(${aiOutput.shared_observation_subjects.map((subject) => subject.toLowerCase())}::text[])
+      `;
+    }
+
     await sql`
       insert into agent_actions (
         world_id,
@@ -98,7 +128,9 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         target,
         description,
         success,
-        effects
+        effects,
+        observation_ids,
+        affected_agent_ids
       )
       values (
         ${world.id},
@@ -108,7 +140,9 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         ${aiOutput.selected_action.target},
         ${aiOutput.selected_action.description},
         ${actionResult.success},
-        ${JSON.stringify(actionResult.effects)}
+        ${JSON.stringify(actionResult.effects)},
+        ${JSON.stringify(observations.map((observation) => observation.id))},
+        ${JSON.stringify([])}
       )
     `;
 
@@ -277,7 +311,7 @@ async function maybeReactAfterTick(input: {
     const relationshipSummary = updatedRelationship
       ? `\n\n${formatRelationshipSummary(reactingAgent.name, input.actingAgent.name, reaction.relationship_effects)}`
       : "";
-    const text = `${reactingAgent.name}:\n${reaction.public_message}${relationshipSummary}`;
+    const text = `${reaction.public_message}${relationshipSummary}`;
     const sent = await sendAgentMessage(reactingAgent, input.chatId, text);
     await sql`
       insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)

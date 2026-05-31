@@ -215,6 +215,26 @@ Reference: [Telegram Bot Features - Bot-to-Bot Communication](https://core.teleg
 
 This project stores `agents.telegram_bot_username` and `agents.telegram_bot_token_env_key` so later versions can map one database agent to one real Telegram bot without changing the world model.
 
+## v0.3 - Agent Perception
+
+Adam and Galya now keep separate subjective observations. An observation is what an inhabitant noticed; a memory is what the inhabitant learned or chose to remember. Private observations are not automatically visible to the other inhabitant.
+
+Normal ticks may create up to three observations for the acting agent. Focused Game Master commands can also force one inhabitant to inspect the world or observe another inhabitant. Relationship changes from observations are intentionally small so trust and tension move gradually.
+
+Useful commands:
+
+```text
+/observations
+/observations galya
+/perception adam
+/perception galya
+/inspect galya utility_panel
+/observe_agent galya adam
+/clean_events
+```
+
+`/clean_events` resolves duplicate active events while keeping the oldest copy. Experiment setup events also use deduplication so repeated canceled/restarted experiments do not fill `/state` with identical active events.
+
 ## Validation
 
 ```bash

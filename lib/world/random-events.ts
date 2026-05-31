@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import type { World } from "@/lib/world/state";
+import { createWorldEventOnce } from "@/lib/world/events";
 
 const randomEvents = [
   {
@@ -66,8 +67,12 @@ export async function maybeCreateRandomEvent(world: World): Promise<void> {
   }
 
   const event = randomEvents[Math.floor(Math.random() * randomEvents.length)];
-  await sql`
-    insert into world_events (world_id, event_type, title, content, severity, source)
-    values (${world.id}, ${event.event_type}, ${event.title}, ${event.content}, ${event.severity}, 'random_event')
-  `;
+  await createWorldEventOnce({
+    worldId: world.id,
+    eventType: event.event_type,
+    title: event.title,
+    content: event.content,
+    severity: event.severity,
+    source: "random_event"
+  });
 }

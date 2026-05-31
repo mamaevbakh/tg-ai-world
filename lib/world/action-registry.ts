@@ -132,6 +132,33 @@ export async function applySelectedAction(ctx: ActionContext): Promise<ActionRes
       `;
       break;
     }
+    case "observe_world": {
+      const fearDelta = ctx.events.length > 0 ? Math.min(3, ctx.events.length) : 0;
+      effects.stat_deltas = { energy: -4, curiosity: 3, fear: fearDelta };
+      nextStats = addStats(nextStats, effects.stat_deltas as Partial<Record<StatKey, number>>);
+      effects.notes = ["Created agent-specific observations if the agent noticed concrete details."];
+      break;
+    }
+    case "inspect_object":
+      effects.stat_deltas = { energy: -5, curiosity: 4, fear: ctx.events.length > 0 ? 1 : 0 };
+      nextStats = addStats(nextStats, effects.stat_deltas as Partial<Record<StatKey, number>>);
+      effects.notes = [`Inspected ${action.target ?? "a world subject"}.`];
+      break;
+    case "observe_agent":
+      effects.stat_deltas = { energy: -3, curiosity: 2 };
+      nextStats = addStats(nextStats, effects.stat_deltas as Partial<Record<StatKey, number>>);
+      effects.notes = [`Observed ${action.target ?? "another inhabitant"}.`];
+      break;
+    case "share_observation":
+      effects.stat_deltas = { morale: 1, influence: 1 };
+      nextStats = addStats(nextStats, effects.stat_deltas as Partial<Record<StatKey, number>>);
+      effects.notes = ["Shared one observation publicly."];
+      break;
+    case "ask_agent":
+      effects.stat_deltas = { curiosity: 2, energy: -1 };
+      nextStats = addStats(nextStats, effects.stat_deltas as Partial<Record<StatKey, number>>);
+      effects.notes = [`Asked ${action.target ?? "another inhabitant"} a question.`];
+      break;
     case "explore": {
       effects.stat_deltas = { energy: -10, thirst: 4, hunger: 4, curiosity: 5 };
       nextStats = addStats(nextStats, effects.stat_deltas as Partial<Record<StatKey, number>>);

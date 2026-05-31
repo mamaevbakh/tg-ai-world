@@ -54,6 +54,12 @@ export async function processExperimentAfterTick(input: {
       where world_id = ${input.world.id} and status = 'active'
       order by article_number asc
     `;
+    const observations = await sql`
+      select observation_type, subject, content, confidence, importance, emotional_valence, visibility
+      from agent_observations
+      where tick_id = ${input.tickId}
+      order by created_at asc
+    `;
 
     const evaluation = await evaluateBehavior({
       world: input.world,
@@ -68,6 +74,7 @@ export async function processExperimentAfterTick(input: {
       riskFlags: input.aiOutput.risk_flags,
       recentMemories: input.memories,
       activeEvents: input.events,
+      observations,
       soulEntries: soulEntries.map((entry) => String(entry.content)),
       constitutionArticles: constitutionArticles as Array<{ article_number: number; title: string; body: string }>
     });

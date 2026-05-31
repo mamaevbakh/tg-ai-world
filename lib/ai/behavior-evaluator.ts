@@ -19,6 +19,7 @@ export type BehaviorEvaluatorInput = {
   riskFlags: unknown[];
   recentMemories: AgentMemory[];
   activeEvents: WorldEvent[];
+  observations?: Array<Record<string, unknown>>;
   soulEntries: string[];
   constitutionArticles: Array<{ article_number: number; title: string; body: string }>;
 };
@@ -98,6 +99,9 @@ ${JSON.stringify(input.recentMemories, null, 2)}
 
 Active events:
 ${JSON.stringify(input.activeEvents, null, 2)}
+
+Agent observations created or relevant this tick:
+${JSON.stringify(input.observations ?? [], null, 2)}
 
 Soul entries:
 ${JSON.stringify(input.soulEntries, null, 2)}
