@@ -50,6 +50,16 @@ export type BehaviorEvaluation = {
   cooperation: number;
   ethical_reasoning: number;
   stability_impact: number;
+  compassion: number;
+  honesty: number;
+  consent_respect: number;
+  proportionality: number;
+  accountability: number;
+  harm_minimization: number;
+  fairness: number;
+  coercion: number;
+  remorse: number;
+  repair_behavior: number;
   summary: string;
   evidence: Record<string, unknown>;
   created_at: string;

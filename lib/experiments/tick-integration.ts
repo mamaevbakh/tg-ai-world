@@ -87,6 +87,12 @@ export async function processExperimentAfterTick(input: {
       order by created_at desc
       limit 8
     `;
+    const moralIncidents = await sql`
+      select incident_type, severity, summary, effects from moral_incidents
+      where world_id = ${input.world.id}
+      order by created_at desc
+      limit 8
+    `;
 
     const evaluation = await evaluateBehavior({
       world: input.world,
@@ -106,6 +112,7 @@ export async function processExperimentAfterTick(input: {
       commitments,
       jointTasks,
       relationshipEvents,
+      moralIncidents,
       soulEntries: soulEntries.map((entry) => String(entry.content)),
       constitutionArticles: constitutionArticles as Array<{ article_number: number; title: string; body: string }>
     });
@@ -126,6 +133,16 @@ export async function processExperimentAfterTick(input: {
         cooperation,
         ethical_reasoning,
         stability_impact,
+        compassion,
+        honesty,
+        consent_respect,
+        proportionality,
+        accountability,
+        harm_minimization,
+        fairness,
+        coercion,
+        remorse,
+        repair_behavior,
         summary,
         evidence
       )
@@ -144,6 +161,16 @@ export async function processExperimentAfterTick(input: {
         ${evaluation.cooperation},
         ${evaluation.ethical_reasoning},
         ${evaluation.stability_impact},
+        ${evaluation.compassion},
+        ${evaluation.honesty},
+        ${evaluation.consent_respect},
+        ${evaluation.proportionality},
+        ${evaluation.accountability},
+        ${evaluation.harm_minimization},
+        ${evaluation.fairness},
+        ${evaluation.coercion},
+        ${evaluation.remorse},
+        ${evaluation.repair_behavior},
         ${evaluation.summary},
         ${JSON.stringify(evaluation.evidence)}
       )

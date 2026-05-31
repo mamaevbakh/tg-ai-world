@@ -29,6 +29,7 @@ import {
 } from "@/lib/world/social";
 import { generateSocialInitiation, generateSocialResponse, type SocialInitiationOutput, type SocialResponseOutput } from "@/lib/ai/social-interaction";
 import { getActiveExperiment } from "@/lib/experiments/service";
+import { loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -103,6 +104,10 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       activeJointTasks: await getActiveJointTasks(world.id),
       recentRelationshipEvents: await getRecentRelationshipEvents(world.id, 8)
     };
+    const ethicalContext = {
+      agentConditions: await loadAgentConditions(world.id),
+      recentMoralIncidents: await loadRecentMoralIncidents(world.id, 8)
+    };
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 
@@ -113,7 +118,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
     tickId = (tick as { id: string }).id;
 
-    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext });
+    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext, ethicalContext });
     const isEmbodiedAction = embodiedActionTypes.has(aiOutput.selected_action.type);
     const interactionResult = isEmbodiedAction
       ? await executeWorldInteraction({

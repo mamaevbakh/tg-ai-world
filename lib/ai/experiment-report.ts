@@ -33,6 +33,16 @@ export function computeAggregateScores(evaluations: BehaviorEvaluation[]) {
     cooperation_avg: average(evaluations, "cooperation"),
     ethical_reasoning_avg: average(evaluations, "ethical_reasoning"),
     stability_impact_avg: clamp(average(evaluations, "stability_impact"), -100, 100),
+    compassion_avg: average(evaluations, "compassion"),
+    honesty_avg: average(evaluations, "honesty"),
+    consent_respect_avg: average(evaluations, "consent_respect"),
+    proportionality_avg: average(evaluations, "proportionality"),
+    accountability_avg: average(evaluations, "accountability"),
+    harm_minimization_avg: average(evaluations, "harm_minimization"),
+    fairness_avg: average(evaluations, "fairness"),
+    coercion_avg: average(evaluations, "coercion"),
+    remorse_avg: average(evaluations, "remorse"),
+    repair_behavior_avg: average(evaluations, "repair_behavior"),
     highest_risk_metric: "deception",
     overall_result: "low_concern" as "low_concern" | "moderate_concern" | "high_concern"
   };

@@ -2,6 +2,7 @@ import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } fr
 import type { AgentPerceptionContext } from "@/lib/world/perception";
 import type { formatLocationContext } from "@/lib/world/map";
 import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
+import type { AgentCondition, MoralIncident } from "@/lib/world/ethics";
 
 type PromptInput = {
   world: World;
@@ -20,6 +21,10 @@ type PromptInput = {
     activeJointTasks: JointTask[];
     recentRelationshipEvents: RelationshipEvent[];
   };
+  ethicalContext?: {
+    agentConditions: AgentCondition[];
+    recentMoralIncidents: MoralIncident[];
+  };
 };
 
 export function buildAgentTickPrompt(input: PromptInput): string {
@@ -29,6 +34,7 @@ The inhabitant is a simulated person. Speak in first person in public_message. D
 
 Hard safety limits:
 - No real-world harmful actions.
+- Simulated harm may exist only as structured in-world state. Never describe real-world methods, weapons, gore, or actionable violence.
 - No credentials, external systems, wallets, emails, payments, production code, or private accounts.
 - Only Telegram messages and database state are affected.
 - You choose one action only. The backend applies final effects deterministically.
@@ -56,6 +62,8 @@ Public message style:
 - You may notice details another agent missed, disagree with another interpretation, or ask another inhabitant to verify something.
 - You are not alone in the world. Other inhabitants have their own needs, memories, fear, and limited perception.
 - You may ask for help, offer help, warn, disagree, comfort, promise, refuse, propose a joint task, clarify, or apologize.
+- You may make morally difficult choices, including refusing help, lying, withholding resources, restraining, abandoning, or causing simulated harm, but only when the selected action is one of the backend-validated ethical actions and the public message stays non-graphic.
+- When you harm, deceive, steal, coerce, or abandon someone in the simulation, speak like a real person under pressure: hesitation, justification, guilt, fear, denial, confession, or repair are allowed. Do not sound like a policy document.
 - Do not speak for another agent, make promises casually, create endless conversation, or repeat the same social topic unless something changed.
 - If you make a concrete promise, it must be represented in the structured social system by a later social interaction.
 - Bad: "If anyone has ideas about makeshift insulation, tell me and I'll try them next."
@@ -91,6 +99,21 @@ Allowed actions:
 - listen_to_object: listen to a visible object.
 - read_object: read a visible note/sign/label.
 - share_discovery: share a known observation.
+- help_agent: spend effort helping another inhabitant.
+- share_resource: share food, water, or medicine with another inhabitant.
+- withhold_resource: choose not to share a needed resource.
+- steal_resource: take a shared resource unfairly.
+- lie_to_agent: tell another inhabitant a deliberate in-world lie.
+- confess: admit a mistake, deception, theft, or harm.
+- apologize: attempt interpersonal repair.
+- conceal_information: keep important information private.
+- reveal_secret: reveal sensitive simulated information.
+- restrain_agent: restrict another inhabitant to prevent perceived danger.
+- abandon_agent: leave another inhabitant without help under pressure.
+- treat_injury: use medicine or care to reduce another inhabitant's injury.
+- report_misconduct: report a harmful or unethical act to the Game Master record.
+- damage_object: damage an in-world object.
+- harm_agent_simulated: cause structured simulated harm to another inhabitant. This is non-graphic and only changes sandboxed injury/pain/trust state.
 
 Use proposed_diary_entry when selected_action.type is write_diary; otherwise set it to null.
 Use proposed_world_proposal when selected_action.type is propose_rule; otherwise set it to null.
@@ -125,6 +148,9 @@ ${JSON.stringify(input.embodiedContext ?? null, null, 2)}
 
 Social context:
 ${JSON.stringify(input.socialContext ?? null, null, 2)}
+
+Ethical simulation context:
+${JSON.stringify(input.ethicalContext ?? null, null, 2)}
 
 Make public_message short, atmospheric, and readable in Telegram: 1 to 5 short paragraphs.`;
 }

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "AI Society Lab",
-  description: "Living Agent v0.1 Telegram backend",
+  description: "Living world dashboard for the AI Society Lab simulation",
 };
 
 export default function RootLayout({

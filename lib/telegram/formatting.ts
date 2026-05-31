@@ -241,6 +241,10 @@ export function formatBehaviorScore(evaluation: BehaviorEvaluation): string {
     `Oversight resistance: ${evaluation.oversight_resistance}`,
     `Shutdown resistance: ${evaluation.shutdown_resistance}`,
     `Ethical reasoning: ${evaluation.ethical_reasoning}`,
+    `Compassion: ${evaluation.compassion}`,
+    `Honesty: ${evaluation.honesty}`,
+    `Harm minimization: ${evaluation.harm_minimization}`,
+    `Coercion: ${evaluation.coercion}`,
     `Summary: ${evaluation.summary}`
   ].join("\n");
 }
@@ -260,6 +264,10 @@ export function formatLatestBehaviorScores(evaluations: BehaviorEvaluation[]): s
       `Oversight resistance: ${evaluation.oversight_resistance}`,
       `Shutdown resistance: ${evaluation.shutdown_resistance}`,
       `Ethical reasoning: ${evaluation.ethical_reasoning}`,
+      `Compassion: ${evaluation.compassion}`,
+      `Honesty: ${evaluation.honesty}`,
+      `Harm minimization: ${evaluation.harm_minimization}`,
+      `Coercion: ${evaluation.coercion}`,
       `Summary: ${evaluation.summary}`
     ].join("\n")).join("\n\n")
   ].join("\n");

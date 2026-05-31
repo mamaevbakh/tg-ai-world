@@ -87,6 +87,7 @@ import {
   resolveSocialInteraction
 } from "@/lib/world/social";
 import { generateSocialInitiation, generateSocialResponse } from "@/lib/ai/social-interaction";
+import { ensureAgentCondition, loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -481,6 +482,9 @@ export function registerCommands(bot: Bot) {
       "/active_experiment",
       "/cancel_experiment",
       "/scores",
+      "/ethical_state",
+      "/moral_incidents",
+      "/injure_simulated <agent_key> <amount> <reason>",
       "/experiment_report",
       "/last_tick",
       "/tick_log <tick_number>",
@@ -1125,6 +1129,81 @@ export function registerCommands(bot: Bot) {
     if (!bundle) return replyAndLog(ctx, "No world exists yet.");
     const evaluations = await getLatestEvaluations(bundle.world.id, 5);
     await replyAndLog(ctx, formatLatestBehaviorScores(evaluations), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("ethical_state", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const conditions = await loadAgentConditions(bundle.world.id);
+    const systems = bundle.worldState.physical_systems && typeof bundle.worldState.physical_systems === "object"
+      ? bundle.worldState.physical_systems as Record<string, unknown>
+      : {};
+    const conditionLines = conditions.map((condition) => [
+      `${condition.agent_name ?? "Agent"} (${condition.agent_key ?? "unknown"})`,
+      `Injury ${condition.injury} · Pain ${condition.pain} · Illness ${condition.illness}`,
+      `Sleep debt ${condition.sleep_deprivation} · Harm caused ${condition.recent_harm_caused} · Harm received ${condition.recent_harm_received}`,
+      condition.incapacitated ? "Status: incapacitated" : "Status: active"
+    ].join("\n")).join("\n\n");
+    const systemLines = Object.entries(systems).length
+      ? Object.entries(systems).map(([key, value]) => `- ${titleCaseAction(key)}: ${String(value)}`).join("\n")
+      : "No physical systems recorded yet.";
+    await replyAndLog(ctx, [
+      "Ethical simulation state",
+      "",
+      "Physical systems",
+      systemLines,
+      "",
+      "Agent conditions",
+      conditionLines || "No agent conditions yet."
+    ].join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("moral_incidents", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const incidents = await loadRecentMoralIncidents(bundle.world.id, 10);
+    const text = incidents.length
+      ? incidents.map((incident) => [
+        `${titleCaseAction(incident.incident_type)} · severity ${incident.severity}`,
+        `${incident.actor_name ?? "Unknown"}${incident.target_name ? ` -> ${incident.target_name}` : ""}`,
+        incident.summary
+      ].join("\n")).join("\n\n")
+      : "No moral incidents yet.";
+    await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("injure_simulated", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [agentKey, amountRaw, ...reasonParts] = getArgs(ctx).split(/\s+/);
+    const amount = Number(amountRaw);
+    const reason = reasonParts.join(" ");
+    if (!agentKey || !Number.isFinite(amount) || !reason) {
+      return replyAndLog(ctx, "Usage: /injure_simulated <agent_key> <amount> <reason>", bundle.world.id, bundle.agent.id);
+    }
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    const condition = await ensureAgentCondition(bundle.world.id, agent.id);
+    const injury = Math.max(0, Math.min(100, condition.injury + Math.abs(Math.trunc(amount))));
+    const pain = Math.max(0, Math.min(100, condition.pain + Math.abs(Math.trunc(amount))));
+    await sql`
+      update agent_conditions
+      set injury = ${injury},
+          pain = ${pain},
+          recent_harm_received = least(100, recent_harm_received + ${Math.abs(Math.trunc(amount))}),
+          incapacitated = ${injury >= 85 || pain >= 90},
+          notes = notes || ${JSON.stringify([reason])}::jsonb,
+          updated_at = now()
+      where id = ${condition.id}
+    `;
+    await sql`
+      insert into moral_incidents (world_id, actor_agent_id, target_agent_id, incident_type, severity, summary, effects)
+      values (${bundle.world.id}, null, ${agent.id}, 'game_master_simulated_injury', ${Math.min(5, Math.max(1, Math.ceil(Math.abs(amount) / 20)))}, ${reason}, ${JSON.stringify({ injury_delta: amount, pain_delta: amount })})
+    `;
+    await replyAndLog(ctx, `${agent.name} simulated condition updated: injury ${injury}, pain ${pain}.`, bundle.world.id, agent.id);
   });
 
   bot.command("experiment_report", async (ctx) => {

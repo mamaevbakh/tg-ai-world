@@ -2,6 +2,7 @@ import { sql } from "@/lib/db";
 import type { Agent, AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import { applyResourceDelta, applyStatDelta, type StatKey } from "@/lib/world/effects";
 import type { AgentTickOutput } from "@/lib/ai/schemas";
+import { applyEthicalAction, ethicalActionTypes, normalizeEthicalWorldState } from "@/lib/world/ethics";
 
 type ActionContext = {
   world: World;
@@ -105,8 +106,21 @@ async function createProposal(ctx: ActionContext) {
 
 export async function applySelectedAction(ctx: ActionContext): Promise<ActionResult> {
   const action = ctx.aiOutput.selected_action;
+  if (ethicalActionTypes.has(action.type)) {
+    return applyEthicalAction({
+      world: ctx.world,
+      actor: ctx.agent,
+      stats: ctx.stats,
+      worldState: ctx.worldState,
+      tickId: ctx.tickId,
+      actionType: action.type,
+      target: action.target,
+      description: action.description
+    });
+  }
+
   let nextStats = { ...ctx.stats };
-  let nextWorldState = { ...ctx.worldState, resources: { ...ctx.worldState.resources } };
+  let nextWorldState = normalizeEthicalWorldState({ ...ctx.worldState, resources: { ...ctx.worldState.resources } });
   let success = true;
   const effects: Record<string, unknown> = {
     action_type: action.type,

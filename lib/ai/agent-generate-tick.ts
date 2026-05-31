@@ -7,6 +7,7 @@ import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } fr
 import type { AgentPerceptionContext } from "@/lib/world/perception";
 import type { formatLocationContext } from "@/lib/world/map";
 import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
+import type { AgentCondition, MoralIncident } from "@/lib/world/ethics";
 
 type GenerateTickInput = {
   world: World;
@@ -24,6 +25,10 @@ type GenerateTickInput = {
     openCommitments: AgentCommitment[];
     activeJointTasks: JointTask[];
     recentRelationshipEvents: RelationshipEvent[];
+  };
+  ethicalContext?: {
+    agentConditions: AgentCondition[];
+    recentMoralIncidents: MoralIncident[];
   };
 };
 

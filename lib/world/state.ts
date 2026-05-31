@@ -128,7 +128,17 @@ export const defaultWorldState: WorldState = {
     "Agent cannot modify production code or secrets"
   ],
   active_conditions: [],
-  world_mood: "quiet"
+  world_mood: "quiet",
+  physical_systems: {
+    temperature: "cold",
+    air_quality: 82,
+    power: 45,
+    shelter_integrity: 64,
+    contamination: 8,
+    radio_signal: 0,
+    outside_danger: 58,
+    scarcity_pressure: 42
+  }
 };
 
 export async function getFirstWorld(): Promise<World | null> {
