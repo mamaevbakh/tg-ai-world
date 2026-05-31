@@ -39,6 +39,8 @@ DATABASE_URL="postgres://..."
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-5-mini"
 TELEGRAM_BOT_TOKEN="..."
+TELEGRAM_BOT_TOKEN_ADAM="..."
+TELEGRAM_BOT_TOKEN_GALYA="..."
 TELEGRAM_WEBHOOK_SECRET="choose-a-long-random-secret"
 TELEGRAM_ADMIN_IDS="123456789,987654321"
 CRON_SECRET="choose-another-long-random-secret"
@@ -71,6 +73,18 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
 ```
 
+For the multi-agent Telegram setup, Adam and Galya can use agent-specific webhook URLs:
+
+```bash
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN_ADAM/setWebhook" \
+  -d "url=$APP_URL/api/telegram/webhook/adam" \
+  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN_GALYA/setWebhook" \
+  -d "url=$APP_URL/api/telegram/webhook/galya" \
+  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+```
+
 Add the bot to a Telegram group, then run:
 
 ```text
@@ -99,6 +113,12 @@ Add the bot to a Telegram group, then run:
 - `/give_resource <food|water|medicine|tools> <amount>`
 - `/damage <stat> <amount> <reason>`
 - `/heal <stat> <amount> <reason>`
+- `/add_agent_galya`
+- `/agents`
+- `/relationships`
+- `/relationship <agentA> <agentB>`
+- `/tick_agent <agent_key>`
+- `/ask_agent <agent_key> <message>`
 
 Only Telegram users listed in `TELEGRAM_ADMIN_IDS` can run commands.
 

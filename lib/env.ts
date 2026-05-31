@@ -5,6 +5,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().min(1).default("gpt-5-mini"),
   TELEGRAM_BOT_TOKEN: z.string().min(1),
+  TELEGRAM_BOT_TOKEN_ADAM: z.string().optional(),
+  TELEGRAM_BOT_TOKEN_GALYA: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
   TELEGRAM_ADMIN_IDS: z.string().min(1),
   CRON_SECRET: z.string().min(1),

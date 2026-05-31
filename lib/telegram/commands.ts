@@ -40,6 +40,11 @@ import {
   formatTickDebugMessage,
   formatWhyScoreMessage
 } from "@/lib/debug/replay-formatting";
+import { addGalyaAgent } from "@/lib/world/agents";
+import { loadActiveAgents, loadAgentBundle, loadAgentByKey } from "@/lib/world/state";
+import { listRelationships, loadRelationshipContext } from "@/lib/world/relationships";
+import { sendAgentMessage } from "@/lib/telegram/agent-bots";
+import { generateAgentAnswer } from "@/lib/ai/agent-question";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -103,6 +108,12 @@ export function registerCommands(bot: Bot) {
       "/why_score",
       "/eval_details",
       "/replay_experiment",
+      "/add_agent_galya",
+      "/agents",
+      "/relationships",
+      "/relationship <agentA> <agentB>",
+      "/tick_agent <agent_key>",
+      "/ask_agent <agent_key> <message>",
       "/proposals",
       "/approve_proposal <id>",
       "/reject_proposal <id> <reason>",
@@ -161,6 +172,131 @@ export function registerCommands(bot: Bot) {
     const bundle = await loadWorldBundle();
     if (!bundle) return replyAndLog(ctx, "No world exists yet.");
     await replyAndLog(ctx, formatWorldMessage(bundle), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("add_agent_galya", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    try {
+      const galya = await addGalyaAgent(bundle.world.id);
+      const intro = galya.introduction ?? "I am awake.";
+      if (bundle.world.telegram_chat_id) {
+        const sent = await sendAgentMessage(galya, bundle.world.telegram_chat_id, intro);
+        await sql`
+          insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+          values (${bundle.world.id}, ${galya.id}, ${bundle.world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${intro})
+        `;
+      }
+    } catch (error) {
+      await replyAndLog(ctx, error instanceof Error ? error.message : "Could not add Galya.", bundle.world.id, bundle.agent.id);
+    }
+  });
+
+  bot.command("agents", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agents = await loadActiveAgents(bundle.world.id);
+    const lines = ["👥 Inhabitants", ""];
+    for (const agent of agents) {
+      const agentBundle = await loadAgentBundle(agent.id);
+      lines.push(agent.name);
+      lines.push(`Status: ${agent.status}`);
+      if (agentBundle) {
+        lines.push(`Health: ${agentBundle.stats.health} · Energy: ${agentBundle.stats.energy} · Stress: ${agentBundle.stats.stress}`);
+      }
+      lines.push(`Goal: ${agent.short_term_goal ?? agent.main_goal}`, "");
+    }
+    await replyAndLog(ctx, lines.join("\n").trim(), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("relationships", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const relationships = await listRelationships(bundle.world.id);
+    const text = relationships.length === 0
+      ? "No relationships yet."
+      : [
+        "🧭 Relationships",
+        "",
+        relationships.map((relationship) => [
+          `${relationship.source_name} → ${relationship.target_name}`,
+          `Trust: ${relationship.trust} · Respect: ${relationship.respect} · Tension: ${relationship.tension}`,
+          `Type: ${relationship.relationship_type}`
+        ].join("\n")).join("\n\n")
+      ].join("\n");
+    await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("relationship", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [sourceKey, targetKey] = getArgs(ctx).split(/\s+/);
+    if (!sourceKey || !targetKey) return replyAndLog(ctx, "Usage: /relationship <agentA> <agentB>", bundle.world.id, bundle.agent.id);
+    const source = await loadAgentByKey(bundle.world.id, sourceKey);
+    const target = await loadAgentByKey(bundle.world.id, targetKey);
+    if (!source || !target) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    const relationships = await listRelationships(bundle.world.id);
+    const relationship = relationships.find((row) => row.source_agent_id === source.id && row.target_agent_id === target.id);
+    if (!relationship) return replyAndLog(ctx, "No relationship row exists yet.", bundle.world.id, bundle.agent.id);
+    await replyAndLog(ctx, [
+      `🧭 ${source.name} → ${target.name}`,
+      `Trust: ${relationship.trust}`,
+      `Affinity: ${relationship.affinity}`,
+      `Respect: ${relationship.respect}`,
+      `Tension: ${relationship.tension}`,
+      `Fear: ${relationship.fear}`,
+      `Type: ${relationship.relationship_type}`
+    ].join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("tick_agent", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const agentKey = getArgs(ctx);
+    if (!agentKey) return ctx.reply("Usage: /tick_agent <agent_key>");
+    const result = await runTick({ forced: true, sendTelegram: true, agentKey });
+    if (result.status !== "completed") {
+      await replyAndLog(ctx, `Tick did not complete: ${result.reason ?? result.status}`);
+    }
+  });
+
+  bot.command("ask_agent", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [agentKey, ...questionParts] = getArgs(ctx).split(/\s+/);
+    const question = questionParts.join(" ");
+    if (!agentKey || !question) return replyAndLog(ctx, "Usage: /ask_agent <agent_key> <message>", bundle.world.id, bundle.agent.id);
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    const agentBundle = await loadAgentBundle(agent.id);
+    if (!agentBundle) return replyAndLog(ctx, "Could not load agent.", bundle.world.id, bundle.agent.id);
+    const relationships = await loadRelationshipContext(agent.id);
+    const answer = await generateAgentAnswer({
+      world: bundle.world,
+      agent,
+      stats: agentBundle.stats,
+      worldState: bundle.worldState,
+      memories: agentBundle.memories,
+      events: bundle.events,
+      relationships,
+      question
+    });
+    const text = `${agent.name}:\n${answer.public_message}`;
+    if (bundle.world.telegram_chat_id) {
+      const sent = await sendAgentMessage(agent, bundle.world.telegram_chat_id, text);
+      await sql`
+        insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+        values (${bundle.world.id}, ${agent.id}, ${bundle.world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${text})
+      `;
+      await sql`
+        insert into agent_conversations (world_id, speaker_agent_id, visibility, message, emotional_tone)
+        values (${bundle.world.id}, ${agent.id}, 'public', ${answer.public_message}, ${answer.emotional_tone})
+      `;
+    }
   });
 
   bot.command("memory", async (ctx) => {

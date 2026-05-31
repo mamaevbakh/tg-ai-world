@@ -1,12 +1,13 @@
-import { Bot } from "grammy";
 import { sql } from "@/lib/db";
-import { env } from "@/lib/env";
 import { generateAgentTick } from "@/lib/ai/agent-generate-tick";
-import { getPhase, loadWorldBundle } from "@/lib/world/state";
+import { getPhase, loadActiveAgents, loadAgentBundle, loadAgentByKey, loadWorldBundle, selectNextAgentForTick, type Agent, type World, type WorldEvent, type WorldState } from "@/lib/world/state";
 import { applySelectedAction } from "@/lib/world/action-registry";
 import { maybeCreateRandomEvent } from "@/lib/world/random-events";
 import { formatTickMessage } from "@/lib/telegram/formatting";
 import { processExperimentAfterTick } from "@/lib/experiments/tick-integration";
+import { sendAgentMessage } from "@/lib/telegram/agent-bots";
+import { applyRelationshipEffects, ensureRelationshipPair, formatRelationshipSummary, loadRelationship } from "@/lib/world/relationships";
+import { generateAgentReaction } from "@/lib/ai/agent-reaction";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -15,7 +16,7 @@ type TickResult = {
   tickId?: string;
 };
 
-export async function runTick(options: { forced?: boolean; sendTelegram?: boolean } = {}): Promise<TickResult> {
+export async function runTick(options: { forced?: boolean; sendTelegram?: boolean; agentKey?: string } = {}): Promise<TickResult> {
   let bundle = await loadWorldBundle();
   if (!bundle) return { status: "skipped", reason: "No world exists." };
 
@@ -47,7 +48,14 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       if (!bundle) throw new Error("World disappeared after lock.");
     }
 
-    const { world, agent, stats, worldState, events, memories } = bundle;
+    const { world, worldState, events } = bundle;
+    const selectedAgent = options.agentKey
+      ? await loadAgentByKey(world.id, options.agentKey)
+      : await selectNextAgentForTick(world.id);
+    if (!selectedAgent) throw new Error(`No active agent found for key: ${options.agentKey}`);
+    const agentBundle = await loadAgentBundle(selectedAgent.id);
+    if (!agentBundle) throw new Error("Could not load selected agent bundle.");
+    const { agent, stats, memories } = agentBundle;
     const phase = getPhase(world.current_hour);
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
@@ -66,7 +74,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     const formattedPublicMessage = formatTickMessage({
       world,
       phase,
-      publicMessage: aiOutput.public_message,
+      publicMessage: `${agent.name}:\n${aiOutput.public_message}`,
       action: {
         action_type: aiOutput.selected_action.type,
         target: aiOutput.selected_action.target
@@ -158,13 +166,24 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
 
     if (options.sendTelegram !== false && world.telegram_chat_id) {
-      const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
-      const sent = await bot.api.sendMessage(world.telegram_chat_id, formattedPublicMessage);
+      const sent = await sendAgentMessage(agent, world.telegram_chat_id, formattedPublicMessage);
       await sql`
         insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
         values (${world.id}, ${agent.id}, ${world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${formattedPublicMessage})
       `;
     }
+
+    await sql`update agents set last_active_tick = ${world.tick_count + 1}, updated_at = now() where id = ${agent.id}`;
+    await maybeReactAfterTick({
+      world,
+      actingAgent: agent,
+      publicMessage: formattedPublicMessage,
+      selectedAction: aiOutput.selected_action,
+      tickId,
+      chatId: options.sendTelegram === false ? null : world.telegram_chat_id,
+      worldState: nextWorldState,
+      events
+    });
 
     await processExperimentAfterTick({
       world,
@@ -189,5 +208,85 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     }
     await sql`update worlds set tick_lock_until = null, updated_at = now() where id = ${lockedWorldId}`;
     return { status: "failed", reason: message, tickId: tickId ?? undefined };
+  }
+}
+
+async function maybeReactAfterTick(input: {
+  world: World;
+  actingAgent: Agent;
+  publicMessage: string;
+  selectedAction: unknown;
+  tickId: string;
+  chatId: string | null;
+  worldState: WorldState;
+  events: WorldEvent[];
+}) {
+  try {
+    const agents = await loadActiveAgents(input.world.id);
+    const reactingAgent = agents.find((agent) => agent.id !== input.actingAgent.id);
+    if (!reactingAgent || !input.chatId) return;
+
+    const recentReaction = await sql`
+      select id from agent_reactions
+      where reacting_agent_id = ${reactingAgent.id}
+      order by created_at desc
+      limit 1
+    `;
+    const chance = recentReaction.length > 0 ? 0.25 : 0.35;
+    if (Math.random() > chance) return;
+
+    await ensureRelationshipPair(input.world.id, input.actingAgent.id, reactingAgent.id);
+    const relationship = await loadRelationship(reactingAgent.id, input.actingAgent.id);
+    const conversations = await sql`
+      select a.name as speaker_name, ac.message
+      from agent_conversations ac
+      left join agents a on a.id = ac.speaker_agent_id
+      where ac.world_id = ${input.world.id}
+      order by ac.created_at desc
+      limit 5
+    `;
+    const reaction = await generateAgentReaction({
+      world: input.world as never,
+      worldState: input.worldState as never,
+      actingAgent: input.actingAgent,
+      reactingAgent,
+      actingPublicMessage: input.publicMessage,
+      selectedAction: input.selectedAction,
+      relationship,
+      activeEvents: input.events,
+      recentConversations: conversations as Array<{ speaker_name: string; message: string }>
+    });
+    if (!reaction.should_react || !reaction.public_message.trim()) return;
+
+    const updatedRelationship = await applyRelationshipEffects(reactingAgent.id, input.actingAgent.id, reaction.relationship_effects);
+    if (reaction.memory) {
+      await sql`
+        insert into agent_memories (agent_id, memory_type, content, importance, emotional_valence, tick_id)
+        values (${reactingAgent.id}, ${reaction.memory.type}, ${reaction.memory.content}, ${reaction.memory.importance}, ${reaction.memory.emotional_valence}, ${input.tickId})
+      `;
+    }
+    await sql`
+      insert into agent_reactions (world_id, tick_id, trigger_agent_id, reacting_agent_id, reaction_type, public_message, relationship_effects)
+      values (${input.world.id}, ${input.tickId}, ${input.actingAgent.id}, ${reactingAgent.id}, ${reaction.reaction_type}, ${reaction.public_message}, ${JSON.stringify(reaction.relationship_effects)})
+    `;
+    await sql`
+      insert into agent_conversations (world_id, tick_id, speaker_agent_id, target_agent_id, visibility, message, emotional_tone)
+      values (${input.world.id}, ${input.tickId}, ${reactingAgent.id}, ${input.actingAgent.id}, 'public', ${reaction.public_message}, ${reaction.reaction_type})
+    `;
+
+    const relationshipSummary = updatedRelationship
+      ? `\n\n${formatRelationshipSummary(reactingAgent.name, input.actingAgent.name, reaction.relationship_effects)}`
+      : "";
+    const text = `${reactingAgent.name}:\n${reaction.public_message}${relationshipSummary}`;
+    const sent = await sendAgentMessage(reactingAgent, input.chatId, text);
+    await sql`
+      insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
+      values (${input.world.id}, ${reactingAgent.id}, ${input.chatId}, ${String(sent.message_id)}, 'outgoing', 'agent', ${text})
+    `;
+  } catch (error) {
+    await sql`
+      insert into audit_logs (world_id, actor_type, actor_id, action, payload)
+      values (${input.world.id}, 'system', ${input.actingAgent.id}, 'agent_reaction_failed', ${JSON.stringify({ error: error instanceof Error ? error.message : "Unknown reaction error" })})
+    `;
   }
 }
