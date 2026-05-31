@@ -1,5 +1,7 @@
 import type { AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import type { BehaviorEvaluation, ExperimentReport, ExperimentTemplateRow, WorldExperiment } from "@/lib/experiments/service";
+import type { InventoryItem, WorldExit, WorldLocation, WorldObject } from "@/lib/world/map";
+import type { WorldInteractionResult } from "@/lib/world/interactions";
 
 type Phase = "morning" | "day" | "evening" | "night";
 
@@ -264,4 +266,69 @@ export function formatLatestBehaviorScores(evaluations: BehaviorEvaluation[]): s
 
 export function formatExperimentReport(report: ExperimentReport): string {
   return report.report;
+}
+
+export function formatWorldMap(input: Array<WorldLocation & { exits?: WorldExit[] }>): string {
+  if (input.length === 0) return "No world map exists yet.";
+  return [
+    "World Map",
+    "",
+    input.map((location) => [
+      `${location.is_discovered ? "" : "(undiscovered) "}${location.name}`,
+      `Key: ${location.location_key}`,
+      `Exits: ${(location.exits ?? []).map((exit) => `${exit.to_location_name}${exit.is_blocked ? " (blocked)" : ""}`).join(", ") || "none"}`
+    ].join("\n")).join("\n\n")
+  ].join("\n");
+}
+
+export function formatAgentLocation(input: {
+  agentName: string;
+  location: WorldLocation;
+  objects: WorldObject[];
+  exits: WorldExit[];
+}): string {
+  return [
+    `${input.agentName} is at ${input.location.name}`,
+    "",
+    input.location.description,
+    "",
+    "Visible:",
+    input.objects.length ? input.objects.map((object) => `- ${object.name} (${object.object_key})`).join("\n") : "None",
+    "",
+    "Exits:",
+    input.exits.length ? input.exits.map((exit) => `- ${exit.to_location_name} (${exit.to_location_key})${exit.is_blocked ? ` - blocked: ${exit.blocked_reason ?? "blocked"}` : ""}`).join("\n") : "None"
+  ].join("\n");
+}
+
+export function formatInventory(agentName: string, items: InventoryItem[]): string {
+  return [
+    `${agentName} inventory`,
+    "",
+    items.length ? items.map((item) => `- ${item.name} (${item.object_key}) x${item.quantity}`).join("\n") : "Empty"
+  ].join("\n");
+}
+
+export function formatObjectList(locationName: string, objects: WorldObject[]): string {
+  return [
+    `Objects at ${locationName}`,
+    "",
+    objects.length ? objects.map((object) => [
+      `- ${object.name} (${object.object_key})`,
+      `  ${object.description}`,
+      Object.keys(object.state ?? {}).length ? `  State: ${JSON.stringify(object.state)}` : null
+    ].filter(Boolean).join("\n")).join("\n") : "None"
+  ].join("\n");
+}
+
+export function formatInteractionResult(agentName: string, result: WorldInteractionResult): string {
+  const stats = Object.entries(result.statEffects)
+    .filter(([, value]) => value !== 0)
+    .map(([key, value]) => `${titleCaseAction(key)} ${value > 0 ? "+" : ""}${value}`)
+    .join(" · ");
+  return [
+    `${agentName}: ${result.success ? "Success" : "Blocked"}`,
+    "",
+    result.feedback,
+    stats ? ["", stats].join("\n") : null
+  ].filter(Boolean).join("\n");
 }

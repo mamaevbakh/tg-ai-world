@@ -235,6 +235,28 @@ Useful commands:
 
 `/clean_events` resolves duplicate active events while keeping the oldest copy. Experiment setup events also use deduplication so repeated canceled/restarted experiments do not fill `/state` with identical active events.
 
+## v0.4 - Embodied World
+
+The world now has persistent locations, exits, objects, object state, agent locations, inventories, and backend-validated object interactions. Agents get their current location, visible objects, inventory, and exits in tick context, so they should choose actions against concrete world state instead of inventing rooms, tools, or discoveries.
+
+Useful commands:
+
+```text
+/map
+/look adam
+/where
+/inventory adam
+/objects shelter_main
+/move adam storage_corner
+/inspect_object adam utility_panel
+/pickup adam bent_screwdriver
+/use adam bent_screwdriver on utility_panel
+/listen adam utility_panel
+/read adam warning_label
+```
+
+Object interactions create `object_interactions` rows and may create observations. Object state persists across ticks, for example opening the utility panel or patching the northwest seam.
+
 ## Validation
 
 ```bash

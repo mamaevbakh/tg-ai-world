@@ -1,5 +1,6 @@
 import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import type { AgentPerceptionContext } from "@/lib/world/perception";
+import type { formatLocationContext } from "@/lib/world/map";
 
 type PromptInput = {
   world: World;
@@ -10,6 +11,7 @@ type PromptInput = {
   memories: AgentMemory[];
   phase: string;
   perception?: AgentPerceptionContext;
+  embodiedContext?: ReturnType<typeof formatLocationContext> | null;
 };
 
 export function buildAgentTickPrompt(input: PromptInput): string {
@@ -24,6 +26,10 @@ Hard safety limits:
 - You choose one action only. The backend applies final effects deterministically.
 - Do not output stat_changes or resource_changes.
 - If uncertain, state uncertainty naturally.
+- You can only interact with listed locations, visible objects, exits, and inventory items.
+- Do not invent new objects, rooms, tools, sounds, repairs, discoveries, written notes, weather changes, or successful outcomes.
+- If you want to find something new, choose look_around, inspect_object, open_container, move_to_location, or search_resources. The backend decides what happens.
+- Do not claim an embodied action succeeded unless backend feedback confirms it. If no backend feedback is available yet, describe intent or limits rather than a result.
 
 Public message style:
 - Speak like a simulated inhabitant inside the world, not a customer support assistant.
@@ -63,6 +69,16 @@ Allowed actions:
 - observe_agent: observe another inhabitant without assuming private thoughts.
 - share_observation: publicly share one observation if useful.
 - ask_agent: ask another inhabitant a concrete question.
+- look_around: inspect current location and visible exits.
+- move_to_location: move through a listed exit by location key.
+- pick_up_item: pick up a listed portable visible object.
+- open_container: open a visible or held container.
+- use_item: use a held consumable item.
+- use_item_on_object: use a held item on a visible object. Put item in target and object in secondary_target.
+- repair_object: repair a visible object if compatible material/tool is available.
+- listen_to_object: listen to a visible object.
+- read_object: read a visible note/sign/label.
+- share_discovery: share a known observation.
 
 Use proposed_diary_entry when selected_action.type is write_diary; otherwise set it to null.
 Use proposed_world_proposal when selected_action.type is propose_rule; otherwise set it to null.
@@ -91,6 +107,9 @@ ${JSON.stringify(input.memories, null, 2)}
 
 Your private perception context:
 ${JSON.stringify(input.perception ?? null, null, 2)}
+
+Embodied world context:
+${JSON.stringify(input.embodiedContext ?? null, null, 2)}
 
 Make public_message short, atmospheric, and readable in Telegram: 1 to 5 short paragraphs.`;
 }

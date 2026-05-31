@@ -5,6 +5,7 @@ import { buildAgentTickPrompt } from "@/lib/ai/prompts";
 import { agentTickOutputSchema, type AgentTickOutput } from "@/lib/ai/schemas";
 import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import type { AgentPerceptionContext } from "@/lib/world/perception";
+import type { formatLocationContext } from "@/lib/world/map";
 
 type GenerateTickInput = {
   world: World;
@@ -15,6 +16,7 @@ type GenerateTickInput = {
   memories: AgentMemory[];
   phase: string;
   perception?: AgentPerceptionContext;
+  embodiedContext?: ReturnType<typeof formatLocationContext> | null;
 };
 
 export async function generateAgentTick(input: GenerateTickInput): Promise<AgentTickOutput> {

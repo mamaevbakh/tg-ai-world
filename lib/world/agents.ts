@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
 import { ensureV02Seeds, type Agent } from "@/lib/world/state";
 import { ensureRelationshipPair } from "@/lib/world/relationships";
+import { ensureAgentLocation } from "@/lib/world/map";
 
 export async function addGalyaAgent(worldId: string): Promise<Agent> {
   const [existing] = await sql`
@@ -54,6 +55,7 @@ export async function addGalyaAgent(worldId: string): Promise<Agent> {
 
   await sql`insert into agent_stats (agent_id, stress, fear, morale, curiosity) values (${String(galya.id)}, 10, 25, 65, 70)`;
   await ensureV02Seeds(worldId, String(galya.id));
+  await ensureAgentLocation(worldId, String(galya.id));
 
   const adamRows = await sql`
     select * from agents

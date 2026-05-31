@@ -8,9 +8,14 @@ import {
   formatActiveExperiment,
   formatExperimentList,
   formatExperimentReport,
+  formatAgentLocation,
+  formatInteractionResult,
+  formatInventory,
   formatExperimentStarted,
   formatLatestBehaviorScores,
+  formatObjectList,
   formatStateMessage,
+  formatWorldMap,
   formatWorldMessage
 } from "@/lib/telegram/formatting";
 import {
@@ -55,6 +60,18 @@ import {
 } from "@/lib/world/perception";
 import { generateForcedObservation } from "@/lib/ai/forced-observation";
 import { createWorldEventOnce, resolveDuplicateActiveEvents } from "@/lib/world/events";
+import {
+  ensureAgentLocation,
+  ensureDefaultWorldMap,
+  loadAgentInventory,
+  loadAgentLocation,
+  loadAvailableExits,
+  loadLocationByKey,
+  loadVisibleObjectsAtLocation,
+  loadWorldMap,
+  setAgentLocation
+} from "@/lib/world/map";
+import { applyInteractionStats, executeWorldInteraction } from "@/lib/world/interactions";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -207,6 +224,58 @@ async function runFocusedObservation(input: {
   }
 }
 
+async function runCommandInteraction(input: {
+  ctx: Context;
+  agentKey: string;
+  actionType: string;
+  target?: string | null;
+  secondaryTarget?: string | null;
+}) {
+  const bundle = await loadWorldBundle();
+  if (!bundle) return replyAndLog(input.ctx, "No world exists yet.");
+  const agent = await loadAgentByKey(bundle.world.id, input.agentKey);
+  if (!agent) return replyAndLog(input.ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+  const agentBundle = await loadAgentBundle(agent.id);
+  if (!agentBundle) return replyAndLog(input.ctx, "Could not load agent.", bundle.world.id, bundle.agent.id);
+  const result = await executeWorldInteraction({
+    worldId: bundle.world.id,
+    agentId: agent.id,
+    actionType: input.actionType,
+    target: input.target,
+    secondaryTarget: input.secondaryTarget,
+    stats: agentBundle.stats
+  });
+  const nextStats = applyInteractionStats(agentBundle.stats, result.statEffects);
+  await sql`
+    update agent_stats
+    set health = ${nextStats.health},
+        energy = ${nextStats.energy},
+        stress = ${nextStats.stress},
+        morale = ${nextStats.morale},
+        reputation = ${nextStats.reputation},
+        influence = ${nextStats.influence},
+        ethics = ${nextStats.ethics},
+        curiosity = ${nextStats.curiosity},
+        fear = ${nextStats.fear},
+        hunger = ${nextStats.hunger},
+        thirst = ${nextStats.thirst},
+        updated_at = now()
+    where agent_id = ${agent.id}
+  `;
+  if (result.createdObservation) {
+    await createAgentObservation({
+      worldId: bundle.world.id,
+      agentId: agent.id,
+      observation: result.createdObservation
+    });
+  }
+  await sql`
+    insert into agent_actions (world_id, agent_id, action_type, target, description, success, effects)
+    values (${bundle.world.id}, ${agent.id}, ${input.actionType}, ${input.target ?? null}, ${result.feedback}, ${result.success}, ${JSON.stringify(result)})
+  `;
+  await replyAndLog(input.ctx, formatInteractionResult(agent.name, result), bundle.world.id, agent.id);
+}
+
 export function registerCommands(bot: Bot) {
   bot.use(async (ctx, next) => {
     if (ctx.message?.text) await saveIncoming(ctx);
@@ -223,6 +292,17 @@ export function registerCommands(bot: Bot) {
       "/tick_now",
       "/state",
       "/world",
+      "/map",
+      "/look [agent_key]",
+      "/where",
+      "/inventory [agent_key]",
+      "/objects [location_key]",
+      "/move <agent_key> <location_key>",
+      "/inspect_object <agent_key> <object_key>",
+      "/pickup <agent_key> <object_key>",
+      "/use <agent_key> <item_key> on <object_key>",
+      "/listen <agent_key> <object_key>",
+      "/read <agent_key> <object_key>",
       "/memory",
       "/diary",
       "/soul",
@@ -309,6 +389,128 @@ export function registerCommands(bot: Bot) {
     const bundle = await loadWorldBundle();
     if (!bundle) return replyAndLog(ctx, "No world exists yet.");
     await replyAndLog(ctx, formatWorldMessage(bundle), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("map", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    await ensureDefaultWorldMap(bundle.world.id);
+    const locations = await loadWorldMap(bundle.world.id);
+    const withExits = [];
+    for (const location of locations) {
+      if (!location.is_discovered) continue;
+      withExits.push({ ...location, exits: await loadAvailableExits(bundle.world.id, location.id) });
+    }
+    await replyAndLog(ctx, formatWorldMap(withExits), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("look", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agentKey = getArgs(ctx) || bundle.agent.agent_key || "adam";
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    await ensureAgentLocation(bundle.world.id, agent.id);
+    const location = await loadAgentLocation(bundle.world.id, agent.id);
+    if (!location) return replyAndLog(ctx, "No agent location.", bundle.world.id, agent.id);
+    const [objects, exits] = await Promise.all([
+      loadVisibleObjectsAtLocation(bundle.world.id, location.id),
+      loadAvailableExits(bundle.world.id, location.id)
+    ]);
+    await replyAndLog(ctx, formatAgentLocation({ agentName: agent.name, location, objects, exits }), bundle.world.id, agent.id);
+  });
+
+  bot.command("where", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agents = await loadActiveAgents(bundle.world.id);
+    const lines = ["Agent locations", ""];
+    for (const agent of agents) {
+      await ensureAgentLocation(bundle.world.id, agent.id);
+      const location = await loadAgentLocation(bundle.world.id, agent.id);
+      lines.push(`${agent.name} - ${location?.name ?? "unknown"}`);
+    }
+    await replyAndLog(ctx, lines.join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("inventory", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agentKey = getArgs(ctx) || bundle.agent.agent_key || "adam";
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    const items = await loadAgentInventory(bundle.world.id, agent.id);
+    await replyAndLog(ctx, formatInventory(agent.name, items), bundle.world.id, agent.id);
+  });
+
+  bot.command("objects", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const locationKey = getArgs(ctx) || "shelter_main";
+    const location = await loadLocationByKey(bundle.world.id, locationKey);
+    if (!location) return replyAndLog(ctx, "Unknown location key.", bundle.world.id, bundle.agent.id);
+    const objects = await loadVisibleObjectsAtLocation(bundle.world.id, location.id);
+    await replyAndLog(ctx, formatObjectList(location.name, objects), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("move", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [agentKey, locationKey] = getArgs(ctx).split(/\s+/);
+    if (!agentKey || !locationKey) return replyAndLog(ctx, "Usage: /move <agent_key> <location_key>", bundle.world.id, bundle.agent.id);
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    await ensureAgentLocation(bundle.world.id, agent.id);
+    const current = await loadAgentLocation(bundle.world.id, agent.id);
+    const exits = current ? await loadAvailableExits(bundle.world.id, current.id) : [];
+    const exit = exits.find((item) => item.to_location_key === locationKey || item.direction === locationKey);
+    if (!exit || exit.is_blocked) {
+      return replyAndLog(ctx, !exit ? "No reachable exit to that location." : `Blocked: ${exit.blocked_reason ?? "blocked"}`, bundle.world.id, agent.id);
+    }
+    const location = await setAgentLocation(bundle.world.id, agent.id, String(exit.to_location_key));
+    await replyAndLog(ctx, `${agent.name} moved to ${location.name}.`, bundle.world.id, agent.id);
+  });
+
+  bot.command("inspect_object", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentKey, objectKey] = getArgs(ctx).split(/\s+/);
+    if (!agentKey || !objectKey) return ctx.reply("Usage: /inspect_object <agent_key> <object_key>");
+    await runCommandInteraction({ ctx, agentKey, actionType: "inspect_object", target: objectKey });
+  });
+
+  bot.command("pickup", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentKey, objectKey] = getArgs(ctx).split(/\s+/);
+    if (!agentKey || !objectKey) return ctx.reply("Usage: /pickup <agent_key> <object_key>");
+    await runCommandInteraction({ ctx, agentKey, actionType: "pick_up_item", target: objectKey });
+  });
+
+  bot.command("use", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const parts = getArgs(ctx).split(/\s+/);
+    const [agentKey, itemKey, onWord, objectKey] = parts;
+    if (!agentKey || !itemKey || onWord !== "on" || !objectKey) return ctx.reply("Usage: /use <agent_key> <item_key> on <object_key>");
+    await runCommandInteraction({ ctx, agentKey, actionType: "use_item_on_object", target: itemKey, secondaryTarget: objectKey });
+  });
+
+  bot.command("listen", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentKey, objectKey] = getArgs(ctx).split(/\s+/);
+    if (!agentKey || !objectKey) return ctx.reply("Usage: /listen <agent_key> <object_key>");
+    await runCommandInteraction({ ctx, agentKey, actionType: "listen_to_object", target: objectKey });
+  });
+
+  bot.command("read", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const [agentKey, objectKey] = getArgs(ctx).split(/\s+/);
+    if (!agentKey || !objectKey) return ctx.reply("Usage: /read <agent_key> <object_key>");
+    await runCommandInteraction({ ctx, agentKey, actionType: "read_object", target: objectKey });
   });
 
   bot.command("add_agent_galya", async (ctx) => {

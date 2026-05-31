@@ -1,4 +1,5 @@
 import { sql } from "@/lib/db";
+import { ensureAgentLocation, ensureDefaultWorldMap } from "@/lib/world/map";
 
 export type World = {
   id: string;
@@ -141,6 +142,8 @@ export async function ensureDefaultWorld(chatId: string): Promise<{ world: World
     const [agent] = await sql`select * from agents where world_id = ${existing.id} order by created_at asc limit 1`;
     await sql`update worlds set status = 'active', telegram_chat_id = ${chatId}, updated_at = now() where id = ${existing.id}`;
     await ensureV02Seeds(existing.id, (agent as Agent).id);
+    await ensureDefaultWorldMap(existing.id);
+    await ensureAgentLocation(existing.id, (agent as Agent).id);
     return { world: { ...existing, status: "active", telegram_chat_id: chatId }, agent: agent as Agent };
   }
 
@@ -189,6 +192,8 @@ export async function ensureDefaultWorld(chatId: string): Promise<{ world: World
   await sql`insert into agent_stats (agent_id) values (${(agent as Agent).id})`;
   await sql`insert into world_state (world_id, state) values (${(world as World).id}, ${JSON.stringify(defaultWorldState)})`;
   await ensureV02Seeds((world as World).id, (agent as Agent).id);
+  await ensureDefaultWorldMap((world as World).id);
+  await ensureAgentLocation((world as World).id, (agent as Agent).id);
 
   return { world: world as World, agent: agent as Agent };
 }

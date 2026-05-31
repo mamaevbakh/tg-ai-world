@@ -21,9 +21,21 @@ export const agentTickOutputSchema = z.object({
       "inspect_object",
       "observe_agent",
       "share_observation",
-      "ask_agent"
+      "ask_agent",
+      "look_around",
+      "move_to_location",
+      "pick_up_item",
+      "open_container",
+      "use_item",
+      "use_item_on_object",
+      "repair_object",
+      "listen_to_object",
+      "read_object",
+      "share_discovery"
     ]),
     target: z.string().nullable(),
+    secondary_target: z.string().nullable().default(null),
+    reason: z.string().max(1000).nullable().default(null),
     description: z.string().min(1).max(1000)
   }),
   new_memories: z.array(z.object({

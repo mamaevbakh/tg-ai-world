@@ -9,6 +9,8 @@ import { sendAgentMessage } from "@/lib/telegram/agent-bots";
 import { applyRelationshipEffects, ensureRelationshipPair, formatRelationshipSummary, loadRelationship, loadRelationshipContext } from "@/lib/world/relationships";
 import { generateAgentReaction } from "@/lib/ai/agent-reaction";
 import { createAgentObservationsFromTick, defaultObservationForAction, loadAgentPerceptionContext } from "@/lib/world/perception";
+import { applyInteractionStats, executeWorldInteraction } from "@/lib/world/interactions";
+import { formatLocationContext, loadAgentEmbodiedContext } from "@/lib/world/map";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -16,6 +18,20 @@ type TickResult = {
   publicMessage?: string;
   tickId?: string;
 };
+
+const embodiedActionTypes = new Set([
+  "look_around",
+  "move_to_location",
+  "inspect_object",
+  "pick_up_item",
+  "open_container",
+  "use_item",
+  "use_item_on_object",
+  "repair_object",
+  "listen_to_object",
+  "read_object",
+  "share_discovery"
+]);
 
 export async function runTick(options: { forced?: boolean; sendTelegram?: boolean; agentKey?: string } = {}): Promise<TickResult> {
   let bundle = await loadWorldBundle();
@@ -60,6 +76,8 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     const phase = getPhase(world.current_hour);
     const relationships = await loadRelationshipContext(agent.id);
     const perception = await loadAgentPerceptionContext(agent.id, world.id, relationships);
+    const embodiedContextRaw = await loadAgentEmbodiedContext(world.id, agent.id);
+    const embodiedContext = embodiedContextRaw ? formatLocationContext(embodiedContextRaw) : null;
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 
@@ -70,14 +88,43 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
     tickId = (tick as { id: string }).id;
 
-    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception });
-    const actionResult = await applySelectedAction({ world, agent, stats, worldState, events, tickId, aiOutput });
+    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext });
+    const isEmbodiedAction = embodiedActionTypes.has(aiOutput.selected_action.type);
+    const interactionResult = isEmbodiedAction
+      ? await executeWorldInteraction({
+        worldId: world.id,
+        agentId: agent.id,
+        tickId,
+        actionType: aiOutput.selected_action.type,
+        target: aiOutput.selected_action.target,
+        secondaryTarget: aiOutput.selected_action.secondary_target,
+        stats
+      })
+      : null;
+    const actionResult = interactionResult
+      ? {
+        stats: applyInteractionStats(stats, interactionResult.statEffects),
+        worldState,
+        success: interactionResult.success,
+        effects: {
+          action_type: aiOutput.selected_action.type,
+          stat_deltas: interactionResult.statEffects,
+          resource_deltas: {},
+          object_effects: interactionResult.objectEffects,
+          inventory_effects: interactionResult.inventoryEffects,
+          discovered_locations: interactionResult.discoveredLocationKeys,
+          backend_feedback: interactionResult.feedback
+        }
+      }
+      : await applySelectedAction({ world, agent, stats, worldState, events, tickId, aiOutput });
     const nextStats = actionResult.stats;
     const nextWorldState = actionResult.worldState;
     const formattedPublicMessage = formatTickMessage({
       world,
       phase,
-      publicMessage: aiOutput.public_message,
+      publicMessage: interactionResult
+        ? `${aiOutput.public_message}\n\n${interactionResult.feedback}`
+        : aiOutput.public_message,
       action: {
         action_type: aiOutput.selected_action.type,
         target: aiOutput.selected_action.target
@@ -92,7 +139,9 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       `;
     }
 
-    const observationInput = aiOutput.new_observations.length > 0
+    const observationInput = interactionResult?.createdObservation
+      ? [interactionResult.createdObservation]
+      : aiOutput.new_observations.length > 0
       ? aiOutput.new_observations
       : ["observe", "observe_world", "inspect_object", "observe_agent"].includes(aiOutput.selected_action.type)
         ? [defaultObservationForAction({
