@@ -5,6 +5,7 @@ import { generateAgentTick } from "@/lib/ai/agent-generate-tick";
 import { getPhase, loadWorldBundle } from "@/lib/world/state";
 import { applySelectedAction } from "@/lib/world/action-registry";
 import { maybeCreateRandomEvent } from "@/lib/world/random-events";
+import { formatTickMessage } from "@/lib/telegram/formatting";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -61,6 +62,16 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     const actionResult = await applySelectedAction({ world, agent, stats, worldState, events, tickId, aiOutput });
     const nextStats = actionResult.stats;
     const nextWorldState = actionResult.worldState;
+    const formattedPublicMessage = formatTickMessage({
+      world,
+      phase,
+      publicMessage: aiOutput.public_message,
+      action: {
+        action_type: aiOutput.selected_action.type,
+        target: aiOutput.selected_action.target
+      },
+      effects: actionResult.effects
+    });
 
     for (const memory of aiOutput.new_memories) {
       await sql`
@@ -139,7 +150,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       set world_after = ${JSON.stringify({ world: { ...world, tick_count: world.tick_count + 1, current_hour: nextHour, current_day: nextDay }, worldState: nextWorldState })},
           agent_after = ${JSON.stringify({ agent, stats: nextStats })},
           ai_output = ${JSON.stringify(aiOutput)},
-          public_message = ${aiOutput.public_message},
+          public_message = ${formattedPublicMessage},
           status = 'completed',
           completed_at = now()
       where id = ${tickId}
@@ -147,14 +158,14 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
 
     if (options.sendTelegram !== false && world.telegram_chat_id) {
       const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
-      const sent = await bot.api.sendMessage(world.telegram_chat_id, aiOutput.public_message);
+      const sent = await bot.api.sendMessage(world.telegram_chat_id, formattedPublicMessage);
       await sql`
         insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
-        values (${world.id}, ${agent.id}, ${world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${aiOutput.public_message})
+        values (${world.id}, ${agent.id}, ${world.telegram_chat_id}, ${String(sent.message_id)}, 'outgoing', 'agent', ${formattedPublicMessage})
       `;
     }
 
-    return { status: "completed", publicMessage: aiOutput.public_message, tickId };
+    return { status: "completed", publicMessage: formattedPublicMessage, tickId };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown tick error";
     if (tickId) {

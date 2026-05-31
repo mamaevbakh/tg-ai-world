@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/auth/admin";
 import { ensureDefaultWorld, loadWorldBundle } from "@/lib/world/state";
 import { applyGameMasterStatChange, applyResourceDelta, resourceKeySchema, statKeySchema } from "@/lib/world/effects";
 import { runTick } from "@/lib/world/tick-engine";
+import { formatStateMessage, formatWorldMessage } from "@/lib/telegram/formatting";
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -34,10 +35,6 @@ async function saveIncoming(ctx: Context) {
   `;
 }
 
-function compactResources(resources: Record<string, number>): string {
-  return Object.entries(resources).map(([key, value]) => `${key}: ${value}`).join(", ");
-}
-
 export function registerCommands(bot: Bot) {
   bot.use(async (ctx, next) => {
     if (ctx.message?.text) await saveIncoming(ctx);
@@ -53,6 +50,7 @@ export function registerCommands(bot: Bot) {
       "/resume",
       "/tick_now",
       "/state",
+      "/world",
       "/memory",
       "/diary",
       "/soul",
@@ -108,15 +106,14 @@ export function registerCommands(bot: Bot) {
     if (!(await requireAdmin(ctx))) return;
     const bundle = await loadWorldBundle();
     if (!bundle) return replyAndLog(ctx, "No world exists yet.");
-    const activeEvents = bundle.events.length === 0 ? "none" : bundle.events.map((event) => `- ${event.content}`).join("\n");
-    await replyAndLog(ctx, [
-      `Day ${bundle.world.current_day}, hour ${bundle.world.current_hour}:00`,
-      `Status: ${bundle.world.status}`,
-      `Health: ${bundle.stats.health}, energy: ${bundle.stats.energy}, stress: ${bundle.stats.stress}`,
-      `Morale: ${bundle.stats.morale}, fear: ${bundle.stats.fear}, hunger: ${bundle.stats.hunger}, thirst: ${bundle.stats.thirst}`,
-      `Resources: ${compactResources(bundle.worldState.resources)}`,
-      `Active events:\n${activeEvents}`
-    ].join("\n"), bundle.world.id, bundle.agent.id);
+    await replyAndLog(ctx, formatStateMessage(bundle), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("world", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    await replyAndLog(ctx, formatWorldMessage(bundle), bundle.world.id, bundle.agent.id);
   });
 
   bot.command("memory", async (ctx) => {

@@ -116,6 +116,21 @@ Paused worlds do not run from cron.
 
 Normal cron ticks have a 15% chance to create a random world event, capped at three active random events.
 
+## Telegram UX
+
+Telegram output is formatted as a compact world log for mobile reading.
+
+Tick messages include:
+
+- A Day/Hour/Phase header, such as `🌅 Day 1 · 09:00 · Morning`.
+- Mira's narrative text.
+- A compact action line.
+- Up to two short mechanical effect lines.
+
+Narrative text is what the inhabitant says or observes. Mechanical effects are the backend-applied result of the chosen action, such as found resources or important stat changes.
+
+`/state` and `/world` use emoji sections and short lines so the group remains readable instead of turning into a raw debug console.
+
 ## Neon + GitHub Main
 
 Database changes are synced through migrations, not by copying the database from GitHub.
