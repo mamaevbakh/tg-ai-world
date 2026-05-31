@@ -170,7 +170,7 @@ export async function ensureDefaultWorld(chatId: string): Promise<{ world: World
     values (
       ${(world as World).id},
       'Adam',
-      'TELEGRAM_BOT_TOKEN',
+      'TELEGRAM_BOT_TOKEN_ADAM',
       'adam',
       'Adam',
       'I am awake in the shelter. The air is cold, supplies are limited, and I will report what I notice as the hours pass.',

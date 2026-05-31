@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { Update } from "grammy/types";
-import { env, getEnv } from "@/lib/env";
+import { env, getAdamTelegramBotToken, getEnv } from "@/lib/env";
 import { getInitializedBotForToken } from "@/lib/telegram/bot";
 
 export const runtime = "nodejs";
@@ -11,7 +11,7 @@ function tokenForAgentKey(agentKey: string): string {
   const envKey = `TELEGRAM_BOT_TOKEN_${normalized.toUpperCase()}`;
   const token = appEnv[envKey] ?? process.env[envKey];
   if (token) return token;
-  if (normalized === "adam") return env.TELEGRAM_BOT_TOKEN;
+  if (normalized === "adam") return getAdamTelegramBotToken();
   throw new Error(`Missing Telegram bot token for ${agentKey}.`);
 }
 

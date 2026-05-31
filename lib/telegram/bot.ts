@@ -1,5 +1,5 @@
 import { Bot } from "grammy";
-import { env } from "@/lib/env";
+import { getAdamTelegramBotToken } from "@/lib/env";
 import { registerCommands } from "@/lib/telegram/commands";
 
 let bot: Bot | null = null;
@@ -8,7 +8,7 @@ const agentBots = new Map<string, { bot: Bot; initPromise: Promise<void> | null 
 
 export function getBot(): Bot {
   if (!bot) {
-    bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+    bot = new Bot(getAdamTelegramBotToken());
     registerCommands(bot);
   }
 

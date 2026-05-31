@@ -4,7 +4,7 @@ const envSchema = z.object({
   DATABASE_URL: z.url(),
   OPENAI_API_KEY: z.string().min(1),
   OPENAI_MODEL: z.string().min(1).default("gpt-5-mini"),
-  TELEGRAM_BOT_TOKEN: z.string().min(1),
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_BOT_TOKEN_ADAM: z.string().optional(),
   TELEGRAM_BOT_TOKEN_GALYA: z.string().optional(),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
@@ -36,4 +36,13 @@ export function getTelegramAdminIds(): string[] {
   return getEnv().TELEGRAM_ADMIN_IDS.split(",")
     .map((id) => id.trim())
     .filter(Boolean);
+}
+
+export function getAdamTelegramBotToken(): string {
+  const token = getEnv().TELEGRAM_BOT_TOKEN_ADAM ?? getEnv().TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN_ADAM.");
+  }
+
+  return token;
 }

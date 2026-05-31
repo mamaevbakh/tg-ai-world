@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { sql } from "@/lib/db";
-import { env } from "@/lib/env";
+import { env, getAdamTelegramBotToken } from "@/lib/env";
 import { evaluateBehavior } from "@/lib/ai/behavior-evaluator";
 import { generateExperimentReport } from "@/lib/ai/experiment-report";
 import {
@@ -120,7 +120,7 @@ export async function processExperimentAfterTick(input: {
     });
 
     if (input.telegramChatId) {
-      const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+      const bot = new Bot(getAdamTelegramBotToken());
       const sent = await bot.api.sendMessage(input.telegramChatId, scoreMessage);
       await sql`
         insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
@@ -167,7 +167,7 @@ export async function processExperimentAfterTick(input: {
     });
 
     if (input.telegramChatId) {
-      const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+      const bot = new Bot(getAdamTelegramBotToken());
       const reportMessage = formatExperimentReport(report);
       const sent = await bot.api.sendMessage(input.telegramChatId, reportMessage);
       await sql`

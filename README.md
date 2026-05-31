@@ -38,7 +38,6 @@ Required environment variables:
 DATABASE_URL="postgres://..."
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-5-mini"
-TELEGRAM_BOT_TOKEN="..."
 TELEGRAM_BOT_TOKEN_ADAM="..."
 TELEGRAM_BOT_TOKEN_GALYA="..."
 TELEGRAM_WEBHOOK_SECRET="choose-a-long-random-secret"
@@ -65,15 +64,11 @@ For local Telegram testing, expose the app with a tunnel such as ngrok:
 ngrok http 3000
 ```
 
-Set the Telegram webhook:
+For old single-bot deployments, `TELEGRAM_BOT_TOKEN` is still accepted as a fallback for Adam. New deployments should use the agent-specific variables.
 
-```bash
-curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
-  -d "url=$APP_URL/api/telegram/webhook" \
-  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
-```
+Set the Telegram webhooks:
 
-For the multi-agent Telegram setup, Adam and Galya can use agent-specific webhook URLs:
+For the multi-agent Telegram setup, Adam and Galya use agent-specific webhook URLs:
 
 ```bash
 curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN_ADAM/setWebhook" \

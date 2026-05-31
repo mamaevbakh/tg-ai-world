@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import type { Message } from "grammy/types";
-import { env, getEnv } from "@/lib/env";
+import { getAdamTelegramBotToken, getEnv } from "@/lib/env";
 import type { Agent } from "@/lib/world/state";
 
 const botCache = new Map<string, Bot>();
@@ -21,7 +21,7 @@ export function getBotTokenForAgent(agent: Pick<Agent, "agent_key" | "telegram_b
   }
 
   if (!agent.agent_key || agent.agent_key === "adam") {
-    return env.TELEGRAM_BOT_TOKEN;
+    return getAdamTelegramBotToken();
   }
 
   throw new Error(`Missing Telegram bot token for agent ${agent.agent_key}.`);
