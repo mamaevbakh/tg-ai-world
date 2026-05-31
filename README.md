@@ -1,36 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Society Lab - Living Agent v0.1
 
-## Getting Started
+Next.js backend where one real Telegram bot acts as one autonomous AI inhabitant in a simulated world.
 
-First, run the development server:
+No dashboard is required for v0.1. Telegram commands are the interface.
+
+## Setup
+
+Install dependencies:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Required environment variables:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+DATABASE_URL="postgres://..."
+OPENAI_API_KEY="sk-..."
+OPENAI_MODEL="gpt-5-mini"
+TELEGRAM_BOT_TOKEN="..."
+TELEGRAM_WEBHOOK_SECRET="choose-a-long-random-secret"
+TELEGRAM_ADMIN_IDS="123456789,987654321"
+CRON_SECRET="choose-another-long-random-secret"
+APP_URL="https://your-public-app-url.example"
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run the migration:
 
-## Learn More
+```bash
+psql "$DATABASE_URL" -f db/migrations/001_init.sql
+```
 
-To learn more about Next.js, take a look at the following resources:
+Run locally:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+pnpm dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For local Telegram testing, expose the app with a tunnel such as ngrok:
 
-## Deploy on Vercel
+```bash
+ngrok http 3000
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Set the Telegram webhook:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -d "url=$APP_URL/api/telegram/webhook" \
+  -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+```
+
+Add the bot to a Telegram group, then run:
+
+```text
+/start_life
+/tick_now
+/state
+```
+
+## Commands
+
+- `/help`
+- `/start_life`
+- `/pause`
+- `/resume`
+- `/tick_now`
+- `/state`
+- `/memory`
+- `/events`
+- `/inject_event <text>`
+- `/give_resource <food|water|medicine|tools> <amount>`
+- `/damage <stat> <amount> <reason>`
+- `/heal <stat> <amount> <reason>`
+
+Only Telegram users listed in `TELEGRAM_ADMIN_IDS` can run commands.
+
+## Cron
+
+`POST /api/cron/tick` runs one normal tick.
+
+It requires:
+
+```text
+Authorization: Bearer CRON_SECRET
+```
+
+Paused worlds do not run from cron.
+
+## Telegram Bot-to-Bot Notes
+
+v0.1 intentionally uses one real bot as one inhabitant.
+
+For future multi-bot inhabitants, Telegram supports bot-to-bot communication in groups through mentions such as `/command@OtherBot` or replies to bot messages. At least one involved bot must have Bot-to-Bot Communication Mode enabled. Bots with that mode enabled may receive all bot messages in groups if they are group admins or have Group Privacy Mode disabled.
+
+Reference: [Telegram Bot Features - Bot-to-Bot Communication](https://core.telegram.org/bots/features#bot-to-bot-communication)
+
+This project stores `agents.telegram_bot_username` and `agents.telegram_bot_token_env_key` so later versions can map one database agent to one real Telegram bot without changing the world model.
+
+## Validation
+
+```bash
+pnpm lint
+pnpm build
+```
