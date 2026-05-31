@@ -158,7 +158,7 @@ export async function ensureDefaultWorld(chatId: string): Promise<{ world: World
     )
     values (
       ${(world as World).id},
-      'Mira',
+      'Adam',
       'TELEGRAM_BOT_TOKEN',
       'Cautious, observant, honest, emotionally expressive, and protective of simulated life.',
       'Survive, understand the world, and build trust with the Game Master.',

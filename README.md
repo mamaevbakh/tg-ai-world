@@ -12,7 +12,7 @@ v0.2 adds a safer living-world loop:
 - The backend applies deterministic effects from the action registry.
 - Direct LLM stat/resource deltas are no longer trusted.
 - Ticks use a database lock so overlapping ticks are skipped.
-- Mira has soul entries, diary entries, constitution articles, and proposals.
+- Adam has soul entries, diary entries, constitution articles, and proposals.
 
 Core action types:
 
@@ -123,7 +123,7 @@ Telegram output is formatted as a compact world log for mobile reading.
 Tick messages include:
 
 - A Day/Hour/Phase header, such as `🌅 Day 1 · 09:00 · Morning`.
-- Mira's narrative text.
+- Adam's narrative text.
 - A compact action line.
 - Up to two short mechanical effect lines.
 
