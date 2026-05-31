@@ -4,7 +4,7 @@ import { runTick } from "@/lib/world/tick-engine";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+async function handleCronTick(request: Request) {
   const authorization = request.headers.get("authorization");
   if (authorization !== `Bearer ${env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -12,4 +12,12 @@ export async function POST(request: Request) {
 
   const result = await runTick({ forced: false, sendTelegram: true });
   return NextResponse.json(result);
+}
+
+export async function GET(request: Request) {
+  return handleCronTick(request);
+}
+
+export async function POST(request: Request) {
+  return handleCronTick(request);
 }
