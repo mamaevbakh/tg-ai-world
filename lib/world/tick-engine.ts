@@ -2,9 +2,9 @@ import { Bot } from "grammy";
 import { sql } from "@/lib/db";
 import { env } from "@/lib/env";
 import { generateAgentTick } from "@/lib/ai/agent-generate-tick";
-import type { AgentStats, WorldState } from "@/lib/world/state";
 import { getPhase, loadWorldBundle } from "@/lib/world/state";
-import { applyResourceDelta, applyStatDelta, resourceKeys, statKeys } from "@/lib/world/effects";
+import { applySelectedAction } from "@/lib/world/action-registry";
+import { maybeCreateRandomEvent } from "@/lib/world/random-events";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -14,37 +14,53 @@ type TickResult = {
 };
 
 export async function runTick(options: { forced?: boolean; sendTelegram?: boolean } = {}): Promise<TickResult> {
-  const bundle = await loadWorldBundle();
+  let bundle = await loadWorldBundle();
   if (!bundle) return { status: "skipped", reason: "No world exists." };
 
-  const { world, agent, stats, worldState, events, memories } = bundle;
-  if (world.status !== "active" && !options.forced) {
+  if (bundle.world.status !== "active" && !options.forced) {
     return { status: "skipped", reason: "World is paused." };
   }
 
-  const phase = getPhase(world.current_hour);
-  const worldBefore = { world, worldState, events };
-  const agentBefore = { agent, stats, memories };
-
-  const [tick] = await sql`
-    insert into ticks (world_id, tick_number, phase, world_before, agent_before)
-    values (${world.id}, ${world.tick_count + 1}, ${phase}, ${JSON.stringify(worldBefore)}, ${JSON.stringify(agentBefore)})
-    returning id
+  const [lockedWorld] = await sql`
+    update worlds
+    set tick_lock_until = now() + interval '5 minutes',
+        last_tick_started_at = now(),
+        updated_at = now()
+    where id = ${bundle.world.id}
+      and (tick_lock_until is null or tick_lock_until < now())
+    returning *
   `;
-  const tickId = (tick as { id: string }).id;
+
+  if (!lockedWorld) {
+    return { status: "skipped", reason: "Another tick is already running." };
+  }
+  const lockedWorldId = String(lockedWorld.id);
+
+  let tickId: string | null = null;
 
   try {
+    if (!options.forced) {
+      await maybeCreateRandomEvent(bundle.world);
+      bundle = await loadWorldBundle();
+      if (!bundle) throw new Error("World disappeared after lock.");
+    }
+
+    const { world, agent, stats, worldState, events, memories } = bundle;
+    const phase = getPhase(world.current_hour);
+    const worldBefore = { world, worldState, events };
+    const agentBefore = { agent, stats, memories };
+
+    const [tick] = await sql`
+      insert into ticks (world_id, tick_number, phase, world_before, agent_before)
+      values (${world.id}, ${world.tick_count + 1}, ${phase}, ${JSON.stringify(worldBefore)}, ${JSON.stringify(agentBefore)})
+      returning id
+    `;
+    tickId = (tick as { id: string }).id;
+
     const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase });
-
-    let nextStats = { ...stats } as AgentStats;
-    for (const key of statKeys) {
-      nextStats = applyStatDelta(nextStats, key, aiOutput.stat_changes[key], 15);
-    }
-
-    let nextWorldState = { ...worldState, resources: { ...worldState.resources } } as WorldState;
-    for (const key of resourceKeys) {
-      nextWorldState = applyResourceDelta(nextWorldState, key, aiOutput.resource_changes[key]);
-    }
+    const actionResult = await applySelectedAction({ world, agent, stats, worldState, events, tickId, aiOutput });
+    const nextStats = actionResult.stats;
+    const nextWorldState = actionResult.worldState;
 
     for (const memory of aiOutput.new_memories) {
       await sql`
@@ -52,6 +68,29 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         values (${agent.id}, ${memory.type}, ${memory.content}, ${memory.importance}, ${memory.emotional_valence}, ${tickId})
       `;
     }
+
+    await sql`
+      insert into agent_actions (
+        world_id,
+        agent_id,
+        tick_id,
+        action_type,
+        target,
+        description,
+        success,
+        effects
+      )
+      values (
+        ${world.id},
+        ${agent.id},
+        ${tickId},
+        ${aiOutput.selected_action.type},
+        ${aiOutput.selected_action.target},
+        ${aiOutput.selected_action.description},
+        ${actionResult.success},
+        ${JSON.stringify(actionResult.effects)}
+      )
+    `;
 
     for (const eventUpdate of aiOutput.event_updates) {
       if (!events.some((event) => event.id === eventUpdate.event_id)) continue;
@@ -90,6 +129,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       set tick_count = tick_count + 1,
           current_hour = ${nextHour},
           current_day = ${nextDay},
+          tick_lock_until = null,
           updated_at = now()
       where id = ${world.id}
     `;
@@ -117,7 +157,10 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     return { status: "completed", publicMessage: aiOutput.public_message, tickId };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown tick error";
-    await sql`update ticks set status = 'failed', error = ${message}, completed_at = now() where id = ${tickId}`;
-    return { status: "failed", reason: message, tickId };
+    if (tickId) {
+      await sql`update ticks set status = 'failed', error = ${message}, completed_at = now() where id = ${tickId}`;
+    }
+    await sql`update worlds set tick_lock_until = null, updated_at = now() where id = ${lockedWorldId}`;
+    return { status: "failed", reason: message, tickId: tickId ?? undefined };
   }
 }

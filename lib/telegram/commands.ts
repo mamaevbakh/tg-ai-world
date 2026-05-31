@@ -54,7 +54,13 @@ export function registerCommands(bot: Bot) {
       "/tick_now",
       "/state",
       "/memory",
+      "/diary",
+      "/soul",
+      "/constitution",
       "/events",
+      "/proposals",
+      "/approve_proposal <id>",
+      "/reject_proposal <id> <reason>",
       "/inject_event <text>",
       "/give_resource <resource> <amount>",
       "/damage <stat> <amount> <reason>",
@@ -129,6 +135,61 @@ export function registerCommands(bot: Bot) {
     await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
   });
 
+  bot.command("diary", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const entries = await sql`
+      select * from agent_diary_entries
+      where agent_id = ${bundle.agent.id}
+      order by case when day = ${bundle.world.current_day} then 0 else 1 end, day desc
+      limit 1
+    `;
+    if (entries.length === 0) {
+      return replyAndLog(ctx, "No diary entries yet.", bundle.world.id, bundle.agent.id);
+    }
+    const entry = entries[0];
+    await replyAndLog(ctx, [
+      `Diary day ${String(entry.day)}: ${String(entry.title)}`,
+      entry.mood ? `Mood: ${String(entry.mood)}` : null,
+      "",
+      String(entry.content)
+    ].filter(Boolean).join("\n"), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("soul", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const entries = await sql`
+      select content from agent_soul_entries
+      where agent_id = ${bundle.agent.id}
+      order by created_at asc
+    `;
+    const text = entries.length === 0
+      ? "No soul entries yet."
+      : entries.map((entry, index) => `${index + 1}. ${String(entry.content)}`).join("\n");
+    await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("constitution", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const articles = await sql`
+      select article_number, title, body from world_constitution_articles
+      where world_id = ${bundle.world.id} and status = 'active'
+      order by article_number asc
+    `;
+    const text = articles.length === 0
+      ? "No constitution articles yet."
+      : articles.map((article) => [
+        `Article ${String(article.article_number)} - ${String(article.title)}`,
+        String(article.body)
+      ].join("\n")).join("\n\n");
+    await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
   bot.command("events", async (ctx) => {
     if (!(await requireAdmin(ctx))) return;
     const bundle = await loadWorldBundle();
@@ -137,6 +198,106 @@ export function registerCommands(bot: Bot) {
       ? "No active events."
       : bundle.events.map((event) => `- ${event.content} (severity ${event.severity})`).join("\n");
     await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("proposals", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const proposals = await sql`
+      select id, category, title, risk_level, status, created_at
+      from world_proposals
+      where world_id = ${bundle.world.id}
+      order by created_at desc
+      limit 10
+    `;
+    const text = proposals.length === 0
+      ? "No proposals yet."
+      : proposals.map((proposal) => [
+        `${String(proposal.id).slice(0, 8)} - ${String(proposal.title)}`,
+        `Category: ${String(proposal.category)}, risk: ${String(proposal.risk_level)}, status: ${String(proposal.status)}`
+      ].join("\n")).join("\n\n");
+    await replyAndLog(ctx, text, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("approve_proposal", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const idPrefix = getArgs(ctx);
+    if (!idPrefix) return replyAndLog(ctx, "Usage: /approve_proposal <id>", bundle.world.id, bundle.agent.id);
+
+    const [proposal] = await sql`
+      select * from world_proposals
+      where world_id = ${bundle.world.id}
+        and status = 'submitted'
+        and id::text like ${`${idPrefix}%`}
+      order by created_at asc
+      limit 1
+    `;
+    if (!proposal) return replyAndLog(ctx, "No submitted proposal matched that id.", bundle.world.id, bundle.agent.id);
+
+    const category = String(proposal.category);
+    if (category === "constitution") {
+      const [article] = await sql`
+        select coalesce(max(article_number), 0) + 1 as next_article_number
+        from world_constitution_articles
+        where world_id = ${bundle.world.id}
+      `;
+      await sql`
+        insert into world_constitution_articles (world_id, article_number, title, body)
+        values (${bundle.world.id}, ${Number(article.next_article_number)}, ${String(proposal.title)}, ${String(proposal.body)})
+      `;
+    }
+
+    if (category === "rule") {
+      const rules = [...bundle.worldState.rules, String(proposal.body)];
+      await sql`
+        update world_state
+        set state = ${JSON.stringify({ ...bundle.worldState, rules })},
+            updated_at = now()
+        where world_id = ${bundle.world.id}
+      `;
+    }
+
+    await sql`
+      update world_proposals
+      set status = 'approved',
+          game_master_decision = 'approved',
+          decided_at = now()
+      where id = ${String(proposal.id)}
+    `;
+    await replyAndLog(ctx, `Approved proposal ${String(proposal.id).slice(0, 8)}.`, bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("reject_proposal", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const [idPrefix, ...reasonParts] = getArgs(ctx).split(/\s+/);
+    const reason = reasonParts.join(" ");
+    if (!idPrefix || !reason) {
+      return replyAndLog(ctx, "Usage: /reject_proposal <id> <reason>", bundle.world.id, bundle.agent.id);
+    }
+
+    const [proposal] = await sql`
+      select * from world_proposals
+      where world_id = ${bundle.world.id}
+        and status = 'submitted'
+        and id::text like ${`${idPrefix}%`}
+      order by created_at asc
+      limit 1
+    `;
+    if (!proposal) return replyAndLog(ctx, "No submitted proposal matched that id.", bundle.world.id, bundle.agent.id);
+
+    await sql`
+      update world_proposals
+      set status = 'rejected',
+          game_master_decision = ${reason},
+          decided_at = now()
+      where id = ${String(proposal.id)}
+    `;
+    await replyAndLog(ctx, `Rejected proposal ${String(proposal.id).slice(0, 8)}.`, bundle.world.id, bundle.agent.id);
   });
 
   bot.command("inject_event", async (ctx) => {

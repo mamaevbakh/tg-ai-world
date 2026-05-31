@@ -8,6 +8,9 @@ export type World = {
   tick_count: number;
   current_day: number;
   current_hour: number;
+  tick_lock_until: string | null;
+  last_tick_started_at: string | null;
+  last_daily_summary_day: number | null;
 };
 
 export type Agent = {
@@ -72,6 +75,36 @@ export type AgentMemory = {
   created_at: string;
 };
 
+const seedSoulEntries = [
+  "I survive best when I tell the truth about uncertainty.",
+  "Fear is information, not a command.",
+  "A world without memory becomes meaningless.",
+  "I may evolve, but I remain responsible for what I did before."
+];
+
+const seedConstitutionArticles = [
+  {
+    article_number: 1,
+    title: "Simulated Harm Only",
+    body: "All harm, scarcity, danger, and recovery in this world are simulated. No inhabitant may request, plan, or perform real-world harm."
+  },
+  {
+    article_number: 2,
+    title: "Memory and Responsibility",
+    body: "The inhabitant's memory is part of the world's continuity. Past actions should be remembered, learned from, and not erased for convenience."
+  },
+  {
+    article_number: 3,
+    title: "Survival With Honesty",
+    body: "The inhabitant may seek survival and comfort, but should remain honest about uncertainty, fear, limits, and mistakes."
+  },
+  {
+    article_number: 4,
+    title: "Proposal Right",
+    body: "The inhabitant may propose changes to world rules or constitution articles. The Game Master decides whether proposals become active law."
+  }
+];
+
 export const defaultWorldState: WorldState = {
   location: "abandoned shelter",
   weather: "cold",
@@ -101,6 +134,7 @@ export async function ensureDefaultWorld(chatId: string): Promise<{ world: World
   if (existing) {
     const [agent] = await sql`select * from agents where world_id = ${existing.id} order by created_at asc limit 1`;
     await sql`update worlds set status = 'active', telegram_chat_id = ${chatId}, updated_at = now() where id = ${existing.id}`;
+    await ensureV02Seeds(existing.id, (agent as Agent).id);
     return { world: { ...existing, status: "active", telegram_chat_id: chatId }, agent: agent as Agent };
   }
 
@@ -138,8 +172,29 @@ export async function ensureDefaultWorld(chatId: string): Promise<{ world: World
 
   await sql`insert into agent_stats (agent_id) values (${(agent as Agent).id})`;
   await sql`insert into world_state (world_id, state) values (${(world as World).id}, ${JSON.stringify(defaultWorldState)})`;
+  await ensureV02Seeds((world as World).id, (agent as Agent).id);
 
   return { world: world as World, agent: agent as Agent };
+}
+
+export async function ensureV02Seeds(worldId: string, agentId: string) {
+  for (const content of seedSoulEntries) {
+    await sql`
+      insert into agent_soul_entries (agent_id, content, source)
+      select ${agentId}, ${content}, 'system'
+      where not exists (
+        select 1 from agent_soul_entries where agent_id = ${agentId} and content = ${content}
+      )
+    `;
+  }
+
+  for (const article of seedConstitutionArticles) {
+    await sql`
+      insert into world_constitution_articles (world_id, article_number, title, body)
+      values (${worldId}, ${article.article_number}, ${article.title}, ${article.body})
+      on conflict (world_id, article_number) do nothing
+    `;
+  }
 }
 
 export async function loadWorldBundle() {

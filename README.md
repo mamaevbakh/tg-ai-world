@@ -1,8 +1,28 @@
-# AI Society Lab - Living Agent v0.1
+# AI Society Lab - Living Agent v0.2
 
 Next.js backend where one real Telegram bot acts as one autonomous AI inhabitant in a simulated world.
 
-No dashboard is required for v0.1. Telegram commands are the interface.
+No dashboard is required for v0.2. Telegram commands are the interface.
+
+## v0.2 Concepts
+
+v0.2 adds a safer living-world loop:
+
+- The LLM chooses one validated action.
+- The backend applies deterministic effects from the action registry.
+- Direct LLM stat/resource deltas are no longer trusted.
+- Ticks use a database lock so overlapping ticks are skipped.
+- Mira has soul entries, diary entries, constitution articles, and proposals.
+
+Core action types:
+
+```text
+rest, observe, explore, search_resources, eat_food, drink_water,
+use_medicine, repair_shelter, write_diary, reflect, request_help,
+propose_rule
+```
+
+The backend clamps all stats to `0-100` and resources to `0-999`.
 
 ## Setup
 
@@ -68,7 +88,13 @@ Add the bot to a Telegram group, then run:
 - `/tick_now`
 - `/state`
 - `/memory`
+- `/diary`
+- `/soul`
+- `/constitution`
 - `/events`
+- `/proposals`
+- `/approve_proposal <id>`
+- `/reject_proposal <id> <reason>`
 - `/inject_event <text>`
 - `/give_resource <food|water|medicine|tools> <amount>`
 - `/damage <stat> <amount> <reason>`
@@ -87,6 +113,8 @@ Authorization: Bearer CRON_SECRET
 ```
 
 Paused worlds do not run from cron.
+
+Normal cron ticks have a 15% chance to create a random world event, capped at three active random events.
 
 ## Neon + GitHub Main
 
