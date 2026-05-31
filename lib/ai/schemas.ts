@@ -31,14 +31,14 @@ export const agentTickOutputSchema = z.object({
     title: z.string().min(1).max(120),
     content: z.string().min(1).max(3000),
     mood: z.string().min(1).max(80).nullable()
-  }).optional(),
+  }).nullable(),
   proposed_world_proposal: z.object({
     category: z.enum(["rule", "constitution", "survival", "memory", "safety", "other"]),
     title: z.string().min(1).max(160),
     body: z.string().min(1).max(3000),
     rationale: z.string().min(1).max(2000),
-    risk_level: z.enum(["low", "medium", "high"]).default("low")
-  }).optional(),
+    risk_level: z.enum(["low", "medium", "high"])
+  }).nullable(),
   event_updates: z.array(z.object({
     event_id: z.uuid(),
     status: z.enum(["active", "resolved"]),

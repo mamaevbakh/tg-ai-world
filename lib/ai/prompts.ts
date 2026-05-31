@@ -39,8 +39,8 @@ Allowed actions:
 - request_help: ask the Game Master for guidance.
 - propose_rule: submit a world proposal for Game Master review.
 
-Use proposed_diary_entry when selected_action.type is write_diary.
-Use proposed_world_proposal when selected_action.type is propose_rule.
+Use proposed_diary_entry when selected_action.type is write_diary; otherwise set it to null.
+Use proposed_world_proposal when selected_action.type is propose_rule; otherwise set it to null.
 
 World:
 ${JSON.stringify(input.world, null, 2)}
