@@ -3,6 +3,7 @@ import { env } from "@/lib/env";
 import { registerCommands } from "@/lib/telegram/commands";
 
 let bot: Bot | null = null;
+let initPromise: Promise<void> | null = null;
 
 export function getBot(): Bot {
   if (!bot) {
@@ -11,4 +12,11 @@ export function getBot(): Bot {
   }
 
   return bot;
+}
+
+export async function getInitializedBot(): Promise<Bot> {
+  const currentBot = getBot();
+  initPromise ??= currentBot.init();
+  await initPromise;
+  return currentBot;
 }

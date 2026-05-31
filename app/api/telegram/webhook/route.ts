@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Update } from "grammy/types";
 import { env } from "@/lib/env";
-import { getBot } from "@/lib/telegram/bot";
+import { getInitializedBot } from "@/lib/telegram/bot";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     }
 
     const update = await request.json() as Update;
-    await getBot().handleUpdate(update);
+    const bot = await getInitializedBot();
+    await bot.handleUpdate(update);
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown webhook error";
