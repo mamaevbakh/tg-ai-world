@@ -90,6 +90,7 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
   const visibleKeys = new Set(visibleObjects.map((object) => object.object_key));
   const inventoryKeys = new Set(inventory.map((item) => item.object_key));
   const sameLocationAgents = [];
+  const currentAgent = agents.find((agent) => agent.id === agentId) ?? null;
   for (const agent of agents) {
     if (agent.id === agentId) continue;
     const agentLocation = await loadAgentLocation(worldId, agent.id);
@@ -327,16 +328,28 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
     } else {
       const crate = await loadObjectByKey(worldId, "storage_crate");
       const adamNearby = sameLocationAgents.find((agent) => agent.agent_key === "adam");
-      if (crate?.state?.jammed === true && crate.state.opened !== true && inventoryKeys.has("bent_screwdriver") && adamNearby) {
-        currentBeat = "Adam returned from the jammed crate and this agent holds the screwdriver. Hand him the tool so the storage scene can continue.";
-        actions.unshift(makeAction({
-          action_type: "hand_item_to_agent",
-          target: "bent_screwdriver",
-          secondary_target: "adam",
-          label: "Hand Adam the screwdriver",
-          reason: "The storage crate is jammed and Adam needs the held tool to open it.",
-          priority: "forced"
-        }));
+      if (crate?.state?.jammed === true && crate.state.opened !== true && inventoryKeys.has("bent_screwdriver")) {
+        if (currentAgent?.agent_key === "adam") {
+          currentBeat = "Adam has the screwdriver and the storage crate is jammed. Go open the crate instead of handing the tool away.";
+          actions.unshift(makeAction({
+            action_type: "move_to_location",
+            target: "storage_corner",
+            secondary_target: null,
+            label: "Go open the storage crate",
+            reason: "Adam holds the needed tool; the next physical beat is at the jammed crate.",
+            priority: "forced"
+          }));
+        } else if (adamNearby) {
+          currentBeat = "Adam returned from the jammed crate and this agent holds the screwdriver. Hand him the tool so the storage scene can continue.";
+          actions.unshift(makeAction({
+            action_type: "hand_item_to_agent",
+            target: "bent_screwdriver",
+            secondary_target: "adam",
+            label: "Hand Adam the screwdriver",
+            reason: "The storage crate is jammed and Adam needs the held tool to open it.",
+            priority: "forced"
+          }));
+        }
       }
       const seam = visibleObjects.find((object) => object.object_key === "northwest_seam");
       const draftLevel = typeof seam?.state?.draft_level === "number" ? seam.state.draft_level : 0;
