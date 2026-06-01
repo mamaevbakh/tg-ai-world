@@ -7,6 +7,7 @@ import {
   loadVisibleObjectsAtLocation
 } from "@/lib/world/map";
 import { loadActiveAgents } from "@/lib/world/state";
+import { sql } from "@/lib/db";
 
 export type SceneAffordance = {
   action_type: AgentTickOutput["selected_action"]["type"];
@@ -49,6 +50,31 @@ function isSameAction(left: AgentTickOutput["selected_action"], right: SceneAffo
   return left.type === right.action_type &&
     (left.target ?? null) === right.target &&
     (left.secondary_target ?? null) === right.secondary_target;
+}
+
+async function recentSuccessfulAction(input: {
+  worldId: string;
+  agentId: string;
+  actionType: string;
+  target?: string | null;
+  secondaryTarget?: string | null;
+  limit?: number;
+}) {
+  const rows = await sql`
+    select action_type, target, secondary_target, success
+    from agent_actions
+    where world_id = ${input.worldId}
+      and agent_id = ${input.agentId}
+    order by created_at desc
+    limit ${input.limit ?? 8}
+  `;
+  return rows.some((row) => {
+    const item = row as { action_type: string; target: string | null; secondary_target: string | null; success: boolean };
+    return item.success === true &&
+      item.action_type === input.actionType &&
+      (input.target === undefined || item.target === input.target) &&
+      (input.secondaryTarget === undefined || item.secondary_target === input.secondaryTarget);
+  });
 }
 
 export async function buildSceneAffordanceContext(worldId: string, agentId: string): Promise<SceneAffordanceContext | null> {
@@ -224,15 +250,26 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
         priority: "recommended"
       }));
     } else if (panel?.state?.opened === true && looseFuse?.state?.seated === true) {
-      currentBeat = "The fuse is seated. Verify whether the panel sound changed.";
-      actions.unshift(makeAction({
-        action_type: "listen_to_object",
+      const alreadyVerified = await recentSuccessfulAction({
+        worldId,
+        agentId,
+        actionType: "listen_to_object",
         target: "utility_panel",
-        secondary_target: null,
-        label: "Verify panel hum",
-        reason: "After a physical repair, the next film beat is sensory verification.",
-        priority: "forced"
-      }));
+        limit: 8
+      });
+      if (!alreadyVerified) {
+        currentBeat = "The fuse is seated. Verify whether the panel sound changed.";
+        actions.unshift(makeAction({
+          action_type: "listen_to_object",
+          target: "utility_panel",
+          secondary_target: null,
+          label: "Verify panel hum",
+          reason: "After a physical repair, the next film beat is sensory verification.",
+          priority: "forced"
+        }));
+      } else {
+        currentBeat = "The panel has been verified after the fuse was seated. The scene can breathe: talk, step back, move, or check another visible concern.";
+      }
     } else if (panel?.state?.opened !== true && inventoryKeys.has("bent_screwdriver") && visibleKeys.has("utility_panel")) {
       currentBeat = "The panel is closed and the screwdriver is held. Open the panel unless a visible blocker prevents it.";
       actions.unshift(makeAction({
