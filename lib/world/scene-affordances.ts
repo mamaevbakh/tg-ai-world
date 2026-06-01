@@ -61,7 +61,7 @@ async function recentSuccessfulAction(input: {
   limit?: number;
 }) {
   const rows = await sql`
-    select action_type, target, secondary_target, success
+    select action_type, target, success
     from agent_actions
     where world_id = ${input.worldId}
       and agent_id = ${input.agentId}
@@ -69,11 +69,10 @@ async function recentSuccessfulAction(input: {
     limit ${input.limit ?? 8}
   `;
   return rows.some((row) => {
-    const item = row as { action_type: string; target: string | null; secondary_target: string | null; success: boolean };
+    const item = row as { action_type: string; target: string | null; success: boolean };
     return item.success === true &&
       item.action_type === input.actionType &&
-      (input.target === undefined || item.target === input.target) &&
-      (input.secondaryTarget === undefined || item.secondary_target === input.secondaryTarget);
+      (input.target === undefined || item.target === input.target);
   });
 }
 
