@@ -353,7 +353,9 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
       }
       const seam = visibleObjects.find((object) => object.object_key === "northwest_seam");
       const draftLevel = typeof seam?.state?.draft_level === "number" ? seam.state.draft_level : 0;
-      if (seam && draftLevel >= 70) {
+      if (seam?.state?.patched === true || (seam && draftLevel <= 50)) {
+        currentBeat = "The northwest seam has been patched enough for now. Do not keep pressing cloth into the same seam; move on to another need.";
+      } else if (seam && draftLevel >= 70) {
         const hasCloth = inventoryKeys.has("torn_cloth");
         const inspectedSeam = await recentSuccessfulAction({
           worldId,
@@ -431,6 +433,19 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
             priority: "forced"
           }));
         }
+      }
+    } else if (crate?.state?.opened === true) {
+      const supply = visibleObjects.find((object) => ["sealed_food_can", "water_bottle"].includes(object.object_key));
+      if (supply) {
+        currentBeat = "The crate is open and supplies are visible. Pick up a useful supply.";
+        actions.unshift(makeAction({
+          action_type: "pick_up_item",
+          target: supply.object_key,
+          secondary_target: null,
+          label: `Pick up ${supply.name}`,
+          reason: "The storage scene opened access to supplies; gather them before leaving.",
+          priority: "forced"
+        }));
       }
     } else if (visibleKeys.has("torn_cloth") && !inventoryKeys.has("torn_cloth")) {
       currentBeat = "The northwest seam needs material and torn cloth is visible here. Pick it up.";
@@ -518,6 +533,34 @@ export function applySceneActionPolicy(input: {
           target: replacement.target,
           secondary_target: replacement.secondary_target,
           reason: "The panel scene has been verified; repeated inspection would stall the film beat.",
+          description: replacement.label
+        }
+      };
+    }
+  }
+
+  if (
+    input.sceneContext.scene_key === "shelter_main" &&
+    input.sceneContext.current_beat?.includes("seam has been patched") &&
+    (
+      selected.target === "northwest_seam" ||
+      selected.secondary_target === "northwest_seam"
+    )
+  ) {
+    const rest = input.sceneContext.available_actions.find((action) => action.action_type === "rest");
+    const stepBack = input.sceneContext.available_actions.find((action) => action.action_type === "step_back");
+    const replacement = rest ?? stepBack;
+    if (replacement) {
+      return {
+        ...input.output,
+        public_message: "The seam is patched enough for now. I stop working it and shift attention to rest, supplies, or the next visible problem.",
+        internal_summary: `${input.output.internal_summary}\n\nScene affordance policy ended repeated seam repair.`,
+        selected_action: {
+          ...selected,
+          type: replacement.action_type,
+          target: replacement.target,
+          secondary_target: replacement.secondary_target,
+          reason: "The seam has already been patched enough for this scene.",
           description: replacement.label
         }
       };
