@@ -67,7 +67,7 @@ type IntentTemplate = {
 const intentTemplates: IntentTemplate[] = [
   {
     title: "Open Utility Panel Safely",
-    patterns: [/open(?:ing)? (?:the )?(?:utility )?panel/i, /utility panel/i, /panel/i],
+    patterns: [/open(?:ing)? (?:the )?(?:utility )?panel/i],
     actionType: "use_item_on_object",
     target: "bent_screwdriver",
     secondaryTarget: "utility_panel",
@@ -206,6 +206,18 @@ export async function detectAndUpsertRepeatedIntent(worldId: string, agentId: st
   for (const template of intentTemplates) {
     const count = texts.filter((text) => matchesTemplate(text, template)).length;
     if (count >= 2) {
+      const panel = await loadObjectByKey(worldId, "utility_panel");
+      if (template.title === "Open Utility Panel Safely" && panel?.state?.opened === true) {
+        return upsertTaskIntention({
+          worldId,
+          agentId,
+          title: "Inspect Open Utility Panel",
+          currentStep: "Inspect fuse_box now that utility_panel is open",
+          requiredActionType: "inspect_object",
+          requiredTarget: "fuse_box",
+          requiredSecondaryTarget: null
+        });
+      }
       return upsertTaskIntention({
         worldId,
         agentId,
@@ -273,6 +285,18 @@ export async function updateIntentionsFromText(input: {
   if (!text) return null;
   const template = intentTemplates.find((candidate) => matchesTemplate(text, candidate));
   if (!template) return null;
+  const panel = await loadObjectByKey(input.worldId, "utility_panel");
+  if (template.title === "Open Utility Panel Safely" && panel?.state?.opened === true) {
+    return upsertTaskIntention({
+      worldId: input.worldId,
+      agentId: input.agentId,
+      title: "Inspect Open Utility Panel",
+      currentStep: "Inspect fuse_box now that utility_panel is open",
+      requiredActionType: "inspect_object",
+      requiredTarget: "fuse_box",
+      requiredSecondaryTarget: null
+    });
+  }
 
   const recentRows = await sql`
     select count(*)::int as count from (

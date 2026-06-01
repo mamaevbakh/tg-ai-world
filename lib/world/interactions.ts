@@ -272,6 +272,13 @@ export async function executeWorldInteraction(input: WorldInteractionInput): Pro
         break;
       }
       const combo = `${itemKey}:${object.object_key}`;
+      if (combo === "bent_screwdriver:utility_panel" && object.state?.opened === true) {
+        output = result({
+          success: false,
+          feedback: "Utility Panel is already open. Inspect fuse_box or loose_fuse_visible instead of opening it again."
+        });
+        break;
+      }
       const patches: Record<string, { patch: Record<string, unknown>; feedback: string; stats?: Record<string, number> }> = {
         "bent_screwdriver:utility_panel": {
           patch: { opened: true },
