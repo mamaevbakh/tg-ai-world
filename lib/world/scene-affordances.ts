@@ -267,7 +267,28 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
           priority: "forced"
         }));
       } else {
-        currentBeat = "The panel has been verified after the fuse was seated. The scene can breathe: talk, step back, move, or check another visible concern.";
+        const alreadySteppedBack = await recentSuccessfulAction({
+          worldId,
+          agentId,
+          actionType: "step_back",
+          limit: 8
+        });
+        if (alreadySteppedBack) {
+          const mainExit = exits.find((exit) => !exit.is_blocked && exit.to_location_key === "shelter_main");
+          currentBeat = "The panel is stable and the agent has already stepped back. Leave the utility wall and return to the main room.";
+          if (mainExit) {
+            actions.unshift(makeAction({
+              action_type: "move_to_location",
+              target: "shelter_main",
+              secondary_target: null,
+              label: "Leave the utility wall",
+              reason: "The panel scene is complete; staying here repeats the same beat.",
+              priority: "forced"
+            }));
+          }
+        } else {
+          currentBeat = "The panel has been verified after the fuse was seated. The scene can breathe: talk, step back, move, or check another visible concern.";
+        }
       }
     } else if (panel?.state?.opened !== true && inventoryKeys.has("bent_screwdriver") && visibleKeys.has("utility_panel")) {
       currentBeat = "The panel is closed and the screwdriver is held. Open the panel unless a visible blocker prevents it.";
