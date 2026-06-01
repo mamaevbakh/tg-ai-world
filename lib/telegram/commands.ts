@@ -90,6 +90,7 @@ import { generateSocialInitiation, generateSocialResponse } from "@/lib/ai/socia
 import { ensureAgentCondition, loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
 import {
   completeMatchingIntention,
+  advanceTaskIntentionsAfterAction,
   buildInventoryTruthContext,
   countRecentRepeatedAsks,
   getActiveTaskIntention,
@@ -323,6 +324,14 @@ async function runCommandInteraction(input: {
     values (${bundle.world.id}, ${agent.id}, ${input.actionType}, ${input.target ?? null}, ${result.feedback}, ${result.success}, ${JSON.stringify(result)})
   `;
   await completeMatchingIntention({
+    worldId: bundle.world.id,
+    agentId: agent.id,
+    actionType: input.actionType,
+    target: input.target,
+    secondaryTarget: input.secondaryTarget,
+    success: result.success
+  });
+  await advanceTaskIntentionsAfterAction({
     worldId: bundle.world.id,
     agentId: agent.id,
     actionType: input.actionType,

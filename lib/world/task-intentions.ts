@@ -512,6 +512,56 @@ export async function completeMatchingIntention(input: {
   `;
 }
 
+export async function advanceTaskIntentionsAfterAction(input: {
+  worldId: string;
+  agentId: string;
+  actionType: string;
+  target?: string | null;
+  secondaryTarget?: string | null;
+  success: boolean;
+}) {
+  if (!input.success) return;
+
+  if (input.actionType === "inspect_object" && input.target === "fuse_box") {
+    const hasScrewdriver = await agentHasItem(input.worldId, input.agentId, "bent_screwdriver");
+    if (hasScrewdriver) {
+      await upsertTaskIntention({
+        worldId: input.worldId,
+        agentId: input.agentId,
+        title: "Seat Loose Fuse",
+        currentStep: "Use bent_screwdriver on loose_fuse",
+        requiredActionType: "use_item_on_object",
+        requiredTarget: "bent_screwdriver",
+        requiredSecondaryTarget: "loose_fuse"
+      });
+      return;
+    }
+
+    await upsertTaskIntention({
+      worldId: input.worldId,
+      agentId: input.agentId,
+      title: "Inspect Loose Fuse",
+      currentStep: "Inspect loose_fuse inside the opened utility_panel",
+      requiredActionType: "inspect_object",
+      requiredTarget: "loose_fuse",
+      requiredSecondaryTarget: null
+    });
+    return;
+  }
+
+  if (input.actionType === "use_item_on_object" && input.target === "bent_screwdriver" && input.secondaryTarget === "loose_fuse") {
+    await upsertTaskIntention({
+      worldId: input.worldId,
+      agentId: input.agentId,
+      title: "Verify Utility Panel Stabilized",
+      currentStep: "Listen to utility_panel after seating loose_fuse",
+      requiredActionType: "listen_to_object",
+      requiredTarget: "utility_panel",
+      requiredSecondaryTarget: null
+    });
+  }
+}
+
 export async function countRecentRepeatedAsks(input: {
   worldId: string;
   agentId: string;
@@ -559,8 +609,12 @@ export async function applyTaskActionPolicy(input: {
   const selectedStaleInspect = selected.type === "inspect_object" &&
     selected.target === intention.required_target &&
     intention.required_action_type !== "inspect_object";
+  const criticalProgression = ["Seat Loose Fuse", "Inspect Loose Fuse", "Verify Utility Panel Stabilized"].includes(intention.title);
+  const alreadySelectedRequired = selected.type === intention.required_action_type &&
+    selected.target === intention.required_target &&
+    selected.secondary_target === intention.required_secondary_target;
 
-  if (!selectedRepeatedAsk && !selectedStaleInspect) return input.output;
+  if (!selectedRepeatedAsk && !selectedStaleInspect && (!criticalProgression || alreadySelectedRequired)) return input.output;
 
   const targetText = intention.required_secondary_target
     ? `${intention.required_target} -> ${intention.required_secondary_target}`

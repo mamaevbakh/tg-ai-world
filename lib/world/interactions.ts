@@ -281,9 +281,14 @@ export async function executeWorldInteraction(input: WorldInteractionInput): Pro
       }
       const patches: Record<string, { patch: Record<string, unknown>; feedback: string; stats?: Record<string, number> }> = {
         "bent_screwdriver:utility_panel": {
-          patch: { opened: true },
+          patch: { opened: true, loose_fuse_visible: true },
           feedback: "The panel opens with a scrape. A loose fuse is visible inside.",
           stats: { energy: -3, curiosity: 3 }
+        },
+        "bent_screwdriver:loose_fuse": {
+          patch: { seated: true },
+          feedback: "The loose fuse clicks back into its socket. The panel hum steadies and the amber alert dims.",
+          stats: { energy: -3, curiosity: 3, morale: 3 }
         },
         "torn_cloth:northwest_seam": {
           patch: { patched: true, draft_level: 50 },
@@ -307,6 +312,36 @@ export async function executeWorldInteraction(input: WorldInteractionInput): Pro
         break;
       }
       await patchObjectState(input.worldId, object.object_key, interaction.patch);
+      if (combo === "bent_screwdriver:utility_panel") {
+        await sql`
+          insert into world_objects (world_id, location_id, object_key, name, object_type, description, state, is_visible, is_usable, is_portable, durability)
+          values (
+            ${input.worldId},
+            ${location.id},
+            'loose_fuse',
+            'Loose Fuse',
+            'machine_part',
+            'A fuse sitting loose inside the opened utility panel.',
+            ${JSON.stringify({ seated: false, visible_after: "utility_panel.opened" })}::jsonb,
+            true,
+            true,
+            false,
+            45
+          )
+          on conflict (world_id, object_key) do update
+          set location_id = excluded.location_id,
+              is_visible = true,
+              state = world_objects.state || ${JSON.stringify({ seated: false, visible_after: "utility_panel.opened" })}::jsonb,
+              updated_at = now()
+        `;
+      }
+      if (combo === "bent_screwdriver:loose_fuse") {
+        await patchObjectState(input.worldId, "utility_panel", {
+          stability: 70,
+          hum_pattern: "steady",
+          alert: "dimmed"
+        });
+      }
       if (combo === "bent_screwdriver:loose_panel") {
         await sql`
           update world_location_exits

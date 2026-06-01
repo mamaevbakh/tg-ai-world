@@ -32,6 +32,7 @@ import { getActiveExperiment } from "@/lib/experiments/service";
 import { loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
 import {
   applyTaskActionPolicy,
+  advanceTaskIntentionsAfterAction,
   buildInventoryTruthContext,
   completeMatchingIntention,
   detectAndUpsertRepeatedIntent,
@@ -299,6 +300,14 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       }
     }
     await completeMatchingIntention({
+      worldId: world.id,
+      agentId: agent.id,
+      actionType: aiOutput.selected_action.type,
+      target: aiOutput.selected_action.target,
+      secondaryTarget: aiOutput.selected_action.secondary_target,
+      success: actionResult.success
+    });
+    await advanceTaskIntentionsAfterAction({
       worldId: world.id,
       agentId: agent.id,
       actionType: aiOutput.selected_action.type,
