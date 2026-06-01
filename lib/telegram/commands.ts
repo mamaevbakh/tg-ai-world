@@ -67,6 +67,7 @@ import {
   ensureAgentLocation,
   ensureDefaultWorldMap,
   loadAgentInventory,
+  loadAgentEmbodiedContext,
   loadAgentLocation,
   loadAvailableExits,
   loadLocationByKey,
@@ -88,6 +89,7 @@ import {
 } from "@/lib/world/social";
 import { generateSocialInitiation, generateSocialResponse } from "@/lib/ai/social-interaction";
 import { ensureAgentCondition, loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
+import { buildSceneAffordanceContext } from "@/lib/world/scene-affordances";
 import {
   completeMatchingIntention,
   advanceTaskIntentionsAfterAction,
@@ -934,6 +936,7 @@ export function registerCommands(bot: Bot) {
       const agentBundle = await loadAgentBundle(agent.id);
       if (!agentBundle) continue;
       const relationships = await loadRelationshipContext(agent.id);
+      const embodiedState = await loadAgentEmbodiedContext(bundle.world.id, agent.id);
       const answer = await generateAgentAnswer({
         world: bundle.world,
         agent,
@@ -942,6 +945,8 @@ export function registerCommands(bot: Bot) {
         memories: agentBundle.memories,
         events: bundle.events,
         relationships,
+        embodiedState,
+        sceneContext: await buildSceneAffordanceContext(bundle.world.id, agent.id),
         question
       });
       if (bundle.world.telegram_chat_id) {
@@ -1009,6 +1014,7 @@ export function registerCommands(bot: Bot) {
     const agentBundle = await loadAgentBundle(agent.id);
     if (!agentBundle) return replyAndLog(ctx, "Could not load agent.", bundle.world.id, bundle.agent.id);
     const relationships = await loadRelationshipContext(agent.id);
+    const embodiedState = await loadAgentEmbodiedContext(bundle.world.id, agent.id);
     const answer = await generateAgentAnswer({
       world: bundle.world,
       agent,
@@ -1017,6 +1023,8 @@ export function registerCommands(bot: Bot) {
       memories: agentBundle.memories,
       events: bundle.events,
       relationships,
+      embodiedState,
+      sceneContext: await buildSceneAffordanceContext(bundle.world.id, agent.id),
       question
     });
     const text = answer.public_message;

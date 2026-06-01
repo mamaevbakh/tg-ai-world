@@ -4,6 +4,7 @@ import { z } from "zod";
 import { env } from "@/lib/env";
 import type { Agent, AgentMemory, AgentStats, World, WorldEvent, WorldState } from "@/lib/world/state";
 import type { Relationship } from "@/lib/world/relationships";
+import type { SceneAffordanceContext } from "@/lib/world/scene-affordances";
 
 const agentAnswerSchema = z.object({
   public_message: z.string().min(1).max(1200),
@@ -19,6 +20,8 @@ export async function generateAgentAnswer(input: {
   events: WorldEvent[];
   relationships: Relationship[];
   question: string;
+  embodiedState?: unknown;
+  sceneContext?: SceneAffordanceContext | null;
 }) {
   const result = await generateObject({
     model: openai(env.OPENAI_MODEL),
@@ -36,6 +39,9 @@ Rules:
 - Stay inside the simulated world.
 - No real-world harmful actions.
 - Keep answer concise, embodied, and Telegram-readable.
+- Current embodied state is more reliable than memories. If memories mention an old alert or old object state, but current objects say it changed, answer from the current objects.
+- Do not claim a panel is still anomalous if current state says alert is dimmed, hum is steady, or a fuse is seated.
+- If the Game Master tells you to stop focusing on a completed scene, acknowledge it and name a concrete next visible action or place to move.
 
 Question:
 ${input.question}
@@ -59,7 +65,13 @@ Events:
 ${JSON.stringify(input.events, null, 2)}
 
 Memories:
-${JSON.stringify(input.memories, null, 2)}`
+${JSON.stringify(input.memories, null, 2)}
+
+Current embodied state:
+${JSON.stringify(input.embodiedState ?? null, null, 2)}
+
+Scene affordances:
+${JSON.stringify(input.sceneContext ?? null, null, 2)}`
   });
 
   return agentAnswerSchema.parse(result.object);
