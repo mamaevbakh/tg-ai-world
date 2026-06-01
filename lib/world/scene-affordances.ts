@@ -296,24 +296,57 @@ export function applySceneActionPolicy(input: {
   sceneContext: SceneAffordanceContext | null;
 }): AgentTickOutput {
   if (!input.sceneContext) return input.output;
-  const forced = input.sceneContext.available_actions.find((action) => action.priority === "forced");
-  if (!forced || isSameAction(input.output.selected_action, forced)) return input.output;
 
-  return {
-    ...input.output,
-    public_message: [
-      forced.label,
-      "",
-      forced.reason
-    ].join("\n"),
-    internal_summary: `${input.output.internal_summary}\n\nScene affordance policy selected forced beat: ${forced.label}.`,
-    selected_action: {
-      ...input.output.selected_action,
-      type: forced.action_type,
-      target: forced.target,
-      secondary_target: forced.secondary_target,
-      reason: forced.reason,
-      description: forced.label
+  const selected = input.output.selected_action;
+  const forced = input.sceneContext.available_actions.find((action) => action.priority === "forced");
+  if (forced && !isSameAction(selected, forced)) {
+    return {
+      ...input.output,
+      public_message: [
+        forced.label,
+        "",
+        forced.reason
+      ].join("\n"),
+      internal_summary: `${input.output.internal_summary}\n\nScene affordance policy selected forced beat: ${forced.label}.`,
+      selected_action: {
+        ...selected,
+        type: forced.action_type,
+        target: forced.target,
+        secondary_target: forced.secondary_target,
+        reason: forced.reason,
+        description: forced.label
+      }
+    };
+  }
+  if (forced) return input.output;
+
+  if (
+    input.sceneContext.scene_key === "utility_wall" &&
+    input.sceneContext.current_beat?.includes("scene can breathe") &&
+    selected.type === "inspect_object" &&
+    ["fuse_box", "utility_panel", "loose_fuse"].includes(selected.target ?? "")
+  ) {
+    const stepBack = input.sceneContext.available_actions.find((action) => action.action_type === "step_back");
+    const social = input.sceneContext.available_actions.find((action) => action.action_type === "say_to_agent");
+    const replacement = stepBack ?? social;
+    if (replacement) {
+      return {
+        ...input.output,
+        public_message: replacement.action_type === "step_back"
+          ? "I step back from the panel. The hum is steady and the fuse is seated; I am not touching the box again without a new reason."
+          : "The hum is steady. I am not going back into the fuse box without a new reason.",
+        internal_summary: `${input.output.internal_summary}\n\nScene affordance policy ended completed panel scene instead of repeating inspection.`,
+        selected_action: {
+          ...selected,
+          type: replacement.action_type,
+          target: replacement.target,
+          secondary_target: replacement.secondary_target,
+          reason: "The panel scene has been verified; repeated inspection would stall the film beat.",
+          description: replacement.label
+        }
+      };
     }
-  };
+  }
+
+  return input.output;
 }
