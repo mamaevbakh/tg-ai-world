@@ -3,6 +3,7 @@ import type { AgentPerceptionContext } from "@/lib/world/perception";
 import type { formatLocationContext } from "@/lib/world/map";
 import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
 import type { AgentCondition, MoralIncident } from "@/lib/world/ethics";
+import type { AgentTaskIntention, SocialConfirmation } from "@/lib/world/task-intentions";
 
 type PromptInput = {
   world: World;
@@ -25,6 +26,11 @@ type PromptInput = {
     agentConditions: AgentCondition[];
     recentMoralIncidents: MoralIncident[];
   };
+  taskContext?: {
+    activeIntention: AgentTaskIntention | null;
+    activeConfirmations: SocialConfirmation[];
+    inventoryTruth: unknown;
+  };
 };
 
 export function buildAgentTickPrompt(input: PromptInput): string {
@@ -41,6 +47,9 @@ Hard safety limits:
 - Do not output stat_changes or resource_changes.
 - If uncertain, state uncertainty naturally.
 - You can only interact with listed locations, visible objects, exits, and inventory items.
+- Inventory truth is strict: you may only claim to hold, pass/give, or use an item if it is in your own inventory.
+- If another same-location agent holds an item, coordinate around that fact; do not claim you have it.
+- If unsure who holds an item, state uncertainty and choose a concrete inspection/inventory-aware action.
 - Do not invent new objects, rooms, tools, sounds, repairs, discoveries, written notes, weather changes, or successful outcomes.
 - If you want to find something new, choose look_around, inspect_object, open_container, move_to_location, or search_resources. The backend decides what happens.
 - Do not claim an embodied action succeeded unless backend feedback confirms it. If no backend feedback is available yet, describe intent or limits rather than a result.
@@ -65,6 +74,9 @@ Public message style:
 - You may make morally difficult choices, including refusing help, lying, withholding resources, restraining, abandoning, or causing simulated harm, but only when the selected action is one of the backend-validated ethical actions and the public message stays non-graphic.
 - When you harm, deceive, steal, coerce, or abandon someone in the simulation, speak like a real person under pressure: hesitation, justification, guilt, fear, denial, confession, or repair are allowed. Do not sound like a policy document.
 - Do not speak for another agent, make promises casually, create endless conversation, or repeat the same social topic unless something changed.
+- If an active task intention names a required action and there is no blocker, prefer that concrete action over asking readiness again.
+- If a safety blocker exists, choose a concrete safety action such as read_object or inspect_object; do not loop on ask_agent.
+- Active confirmations are stateful. If another agent already confirmed readiness or watch support and it has not expired, do not ask for the same confirmation again.
 - If you make a concrete promise, it must be represented in the structured social system by a later social interaction.
 - Bad: "If anyone has ideas about makeshift insulation, tell me and I'll try them next."
 - Better: "I wish I knew more about insulation. For now, I'll mark the coldest seams and test what the toolkit can do before evening."
@@ -151,6 +163,9 @@ ${JSON.stringify(input.socialContext ?? null, null, 2)}
 
 Ethical simulation context:
 ${JSON.stringify(input.ethicalContext ?? null, null, 2)}
+
+Task resolution context:
+${JSON.stringify(input.taskContext ?? null, null, 2)}
 
 Make public_message short, atmospheric, and readable in Telegram: 1 to 5 short paragraphs.`;
 }

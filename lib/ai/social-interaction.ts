@@ -87,6 +87,7 @@ export async function generateSocialInitiation(input: {
   stats: AgentStats;
   recentSocialTurns: SocialTurn[];
   forcedTopic?: string;
+  inventoryTruthContext?: unknown;
 }): Promise<SocialInitiationOutput> {
   const result = await generateObject({
     model: openai(env.OPENAI_MODEL),
@@ -105,6 +106,8 @@ Rules:
 - If making a promise, proposed_commitment must describe it.
 - If proposing cooperation, proposed_joint_task may describe it.
 - If disagreeing, give a concrete reason.
+- Inventory truth is strict: only claim you hold or can pass an item if it is in your own inventory.
+- If another same-location agent holds a tool, say that plainly and offer support you can actually provide.
 
 Forced topic:
 ${input.forcedTopic ?? "none"}
@@ -145,6 +148,9 @@ ${JSON.stringify(input.stats, null, 2)}
 Recent social turns:
 ${JSON.stringify(input.recentSocialTurns, null, 2)}
 
+Inventory truth context:
+${JSON.stringify(input.inventoryTruthContext ?? null, null, 2)}
+
 If no interaction is warranted, set should_start=false and public_message="".`
   });
 
@@ -161,6 +167,7 @@ export async function generateSocialResponse(input: {
   activeJointTasks: JointTask[];
   stats: AgentStats;
   activeEvents: WorldEvent[];
+  inventoryTruthContext?: unknown;
 }): Promise<SocialResponseOutput> {
   const result = await generateObject({
     model: openai(env.OPENAI_MODEL),
@@ -178,6 +185,8 @@ Rules:
 - If making a promise, proposed_commitment must describe it.
 - If cooperation is proposed, proposed_joint_task may describe it.
 - Resolve the interaction if the exchange has reached a useful stopping point.
+- Inventory truth is strict: only claim you hold or can pass an item if it is in your own inventory.
+- If the other agent holds a tool, say so and offer support you can actually provide, such as watching or confirming.
 
 Interaction:
 ${JSON.stringify(input.interaction, null, 2)}
@@ -205,6 +214,9 @@ ${JSON.stringify(input.stats, null, 2)}
 
 Active events:
 ${JSON.stringify(input.activeEvents, null, 2)}
+
+Inventory truth context:
+${JSON.stringify(input.inventoryTruthContext ?? null, null, 2)}
 
 If a response would be filler, set should_respond=false and public_message="".`
   });

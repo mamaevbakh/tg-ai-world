@@ -88,6 +88,39 @@ import {
 } from "@/lib/world/social";
 import { generateSocialInitiation, generateSocialResponse } from "@/lib/ai/social-interaction";
 import { ensureAgentCondition, loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
+import {
+  completeMatchingIntention,
+  buildInventoryTruthContext,
+  countRecentRepeatedAsks,
+  getActiveTaskIntention,
+  listActiveTaskIntentions,
+  maybeCreateSocialConfirmation,
+  refreshTaskBlockers
+} from "@/lib/world/task-intentions";
+
+function formatTaskIntentionList(intentions: Awaited<ReturnType<typeof listActiveTaskIntentions>>): string {
+  if (intentions.length === 0) return "Active intentions\n\nNone.";
+  const groups = new Map<string, typeof intentions>();
+  for (const intention of intentions) {
+    const key = intention.agent_name ?? intention.agent_key ?? "Agent";
+    groups.set(key, [...(groups.get(key) ?? []), intention]);
+  }
+  const lines = ["Active intentions", ""];
+  for (const [agentName, items] of groups.entries()) {
+    lines.push(`${agentName}:`);
+    for (const intention of items) {
+      const target = intention.required_secondary_target
+        ? `${intention.required_target} -> ${intention.required_secondary_target}`
+        : intention.required_target ?? "none";
+      lines.push(intention.title);
+      lines.push(`Next action: ${intention.required_action_type ?? "none"} ${target}`);
+      lines.push(`Blockers: ${intention.blockers.length ? intention.blockers.join(", ") : "none"}`);
+      if (intention.recent_loop_count) lines.push(`Recent loop: asked readiness ${intention.recent_loop_count} times`);
+      lines.push("");
+    }
+  }
+  return lines.join("\n").trim();
+}
 
 function getArgs(ctx: Context): string {
   const text = ctx.message?.text ?? "";
@@ -289,6 +322,14 @@ async function runCommandInteraction(input: {
     insert into agent_actions (world_id, agent_id, action_type, target, description, success, effects)
     values (${bundle.world.id}, ${agent.id}, ${input.actionType}, ${input.target ?? null}, ${result.feedback}, ${result.success}, ${JSON.stringify(result)})
   `;
+  await completeMatchingIntention({
+    worldId: bundle.world.id,
+    agentId: agent.id,
+    actionType: input.actionType,
+    target: input.target,
+    secondaryTarget: input.secondaryTarget,
+    success: result.success
+  });
   await replyAndLog(input.ctx, formatInteractionResult(agent.name, result), bundle.world.id, agent.id);
 }
 
@@ -366,7 +407,8 @@ async function forceSocialScene(input: {
     activeExperiment: await getActiveExperiment(bundle.world.id),
     stats: sourceBundle.stats,
     recentSocialTurns: recentTurns,
-    forcedTopic: input.topic
+    forcedTopic: input.topic,
+    inventoryTruthContext: await buildInventoryTruthContext(bundle.world.id, source)
   });
   if (!start.should_start || !start.public_message.trim()) {
     return replyAndLog(input.ctx, input.nudgeOnly ? "No social interaction started." : "The agent did not produce a social turn.", bundle.world.id, source.id);
@@ -396,6 +438,14 @@ async function forceSocialScene(input: {
     interactionId: interaction.id,
     output: start
   });
+  await maybeCreateSocialConfirmation({
+    world: bundle.world,
+    requesterAgentId: target.id,
+    targetAgentId: source.id,
+    message: start.public_message,
+    intent: start.intent,
+    subject: input.topic.toLowerCase().includes("panel") ? "utility_panel" : null
+  });
   if (bundle.world.telegram_chat_id) {
     const sent = await sendAgentMessage(source, bundle.world.telegram_chat_id, start.public_message);
     await sql`
@@ -415,7 +465,8 @@ async function forceSocialScene(input: {
     openCommitments: commitments,
     activeJointTasks: jointTasks,
     stats: targetBundle.stats,
-    activeEvents: bundle.events
+    activeEvents: bundle.events,
+    inventoryTruthContext: await buildInventoryTruthContext(bundle.world.id, target)
   });
   if (response.should_respond && response.public_message.trim()) {
     await addSocialTurn({
@@ -433,6 +484,14 @@ async function forceSocialScene(input: {
       targetAgentId: source.id,
       interactionId: interaction.id,
       output: response
+    });
+    await maybeCreateSocialConfirmation({
+      world: bundle.world,
+      requesterAgentId: source.id,
+      targetAgentId: target.id,
+      message: response.public_message,
+      intent: response.intent,
+      subject: input.topic.toLowerCase().includes("panel") || response.public_message.toLowerCase().includes("panel") ? "utility_panel" : null
     });
     if (bundle.world.telegram_chat_id) {
       const sent = await sendAgentMessage(target, bundle.world.telegram_chat_id, response.public_message);
@@ -472,6 +531,8 @@ export function registerCommands(bot: Bot) {
       "/use <agent_key> <item_key> on <object_key>",
       "/listen <agent_key> <object_key>",
       "/read <agent_key> <object_key>",
+      "/intentions",
+      "/force_next_step <agent_key>",
       "/memory",
       "/diary",
       "/soul",
@@ -690,6 +751,55 @@ export function registerCommands(bot: Bot) {
     const [agentKey, objectKey] = getArgs(ctx).split(/\s+/);
     if (!agentKey || !objectKey) return ctx.reply("Usage: /read <agent_key> <object_key>");
     await runCommandInteraction({ ctx, agentKey, actionType: "read_object", target: objectKey });
+  });
+
+  bot.command("intentions", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const intentions = await listActiveTaskIntentions(bundle.world.id);
+    const refreshed = [];
+    for (const intention of intentions) {
+      const updated = await refreshTaskBlockers({
+        worldId: bundle.world.id,
+        agentId: intention.agent_id,
+        intention
+      });
+      refreshed.push({
+        ...updated,
+        agent_name: intention.agent_name,
+        agent_key: intention.agent_key,
+        recent_loop_count: await countRecentRepeatedAsks({
+          worldId: bundle.world.id,
+          agentId: intention.agent_id,
+          target: updated.required_secondary_target ?? updated.required_target
+        })
+      });
+    }
+    await replyAndLog(ctx, formatTaskIntentionList(refreshed), bundle.world.id, bundle.agent.id);
+  });
+
+  bot.command("force_next_step", async (ctx) => {
+    if (!(await requireAdmin(ctx))) return;
+    const bundle = await loadWorldBundle();
+    if (!bundle) return replyAndLog(ctx, "No world exists yet.");
+    const agentKey = getArgs(ctx);
+    if (!agentKey) return replyAndLog(ctx, "Usage: /force_next_step <agent_key>", bundle.world.id, bundle.agent.id);
+    const agent = await loadAgentByKey(bundle.world.id, agentKey);
+    if (!agent) return replyAndLog(ctx, "Unknown agent key.", bundle.world.id, bundle.agent.id);
+    const intention = await getActiveTaskIntention(bundle.world.id, agent.id);
+    if (!intention) return replyAndLog(ctx, "No active task intention for that agent.", bundle.world.id, agent.id);
+    const updated = await refreshTaskBlockers({ worldId: bundle.world.id, agentId: agent.id, intention });
+    if (!updated.required_action_type || !updated.required_target) {
+      return replyAndLog(ctx, "That intention has no executable next action.", bundle.world.id, agent.id);
+    }
+    await runCommandInteraction({
+      ctx,
+      agentKey,
+      actionType: updated.required_action_type,
+      target: updated.required_target,
+      secondaryTarget: updated.required_secondary_target
+    });
   });
 
   bot.command("add_agent_galya", async (ctx) => {

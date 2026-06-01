@@ -8,6 +8,7 @@ import type { AgentPerceptionContext } from "@/lib/world/perception";
 import type { formatLocationContext } from "@/lib/world/map";
 import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
 import type { AgentCondition, MoralIncident } from "@/lib/world/ethics";
+import type { AgentTaskIntention, SocialConfirmation } from "@/lib/world/task-intentions";
 
 type GenerateTickInput = {
   world: World;
@@ -29,6 +30,11 @@ type GenerateTickInput = {
   ethicalContext?: {
     agentConditions: AgentCondition[];
     recentMoralIncidents: MoralIncident[];
+  };
+  taskContext?: {
+    activeIntention: AgentTaskIntention | null;
+    activeConfirmations: SocialConfirmation[];
+    inventoryTruth: unknown;
   };
 };
 

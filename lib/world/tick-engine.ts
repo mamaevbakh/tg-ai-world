@@ -30,6 +30,16 @@ import {
 import { generateSocialInitiation, generateSocialResponse, type SocialInitiationOutput, type SocialResponseOutput } from "@/lib/ai/social-interaction";
 import { getActiveExperiment } from "@/lib/experiments/service";
 import { loadAgentConditions, loadRecentMoralIncidents } from "@/lib/world/ethics";
+import {
+  applyTaskActionPolicy,
+  buildInventoryTruthContext,
+  completeMatchingIntention,
+  detectAndUpsertRepeatedIntent,
+  getActiveTaskIntention,
+  loadActiveSocialConfirmations,
+  maybeCreateSocialConfirmation,
+  updateIntentionsFromText
+} from "@/lib/world/task-intentions";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -108,6 +118,15 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       agentConditions: await loadAgentConditions(world.id),
       recentMoralIncidents: await loadRecentMoralIncidents(world.id, 8)
     };
+    await detectAndUpsertRepeatedIntent(world.id, agent.id);
+    const activeIntention = await getActiveTaskIntention(world.id, agent.id);
+    const activeConfirmations = await loadActiveSocialConfirmations(world.id, world.tick_count);
+    const inventoryTruth = await buildInventoryTruthContext(world.id, agent);
+    const taskContext = {
+      activeIntention,
+      activeConfirmations,
+      inventoryTruth
+    };
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 
@@ -118,7 +137,24 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
     tickId = (tick as { id: string }).id;
 
-    const aiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext, ethicalContext });
+    const rawAiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext, ethicalContext, taskContext });
+    await updateIntentionsFromText({
+      worldId: world.id,
+      agentId: agent.id,
+      text: [
+        rawAiOutput.public_message,
+        rawAiOutput.internal_summary,
+        rawAiOutput.selected_action.description,
+        rawAiOutput.selected_action.reason ?? ""
+      ].join("\n")
+    });
+    const aiOutput = await applyTaskActionPolicy({
+      worldId: world.id,
+      agentId: agent.id,
+      output: rawAiOutput,
+      activeIntention: await getActiveTaskIntention(world.id, agent.id),
+      activeConfirmations
+    });
     const isEmbodiedAction = embodiedActionTypes.has(aiOutput.selected_action.type);
     const interactionResult = isEmbodiedAction
       ? await executeWorldInteraction({
@@ -224,6 +260,50 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         ${JSON.stringify([])}
       )
     `;
+    if (aiOutput.selected_action.type === "ask_agent" && aiOutput.selected_action.target) {
+      const targetAgent = await loadAgentByKey(world.id, aiOutput.selected_action.target);
+      if (targetAgent) {
+        const interaction = await createSocialInteraction({
+          worldId: world.id,
+          initiatingAgentId: agent.id,
+          targetAgentId: targetAgent.id,
+          tickId,
+          interactionType: "conversation",
+          topic: aiOutput.selected_action.description,
+          importance: 5,
+          force: true
+        });
+        if (interaction) {
+          await addSocialTurn({
+            interactionId: interaction.id,
+            worldId: world.id,
+            speakerAgentId: agent.id,
+            targetAgentId: targetAgent.id,
+            message: aiOutput.public_message,
+            emotionalTone: "task coordination",
+            intent: "ask"
+          });
+        }
+        if (/(panel|панел|нагруз|load|screwdriver|отв[её]рт)/i.test(aiOutput.public_message)) {
+          await maybeCreateSocialConfirmation({
+            world,
+            requesterAgentId: targetAgent.id,
+            targetAgentId: agent.id,
+            message: aiOutput.public_message,
+            intent: /(изолирован|isolated|ready|готов|предупреж)/i.test(aiOutput.public_message) ? "answer" : "ask",
+            subject: "utility_panel"
+          });
+        }
+      }
+    }
+    await completeMatchingIntention({
+      worldId: world.id,
+      agentId: agent.id,
+      actionType: aiOutput.selected_action.type,
+      target: aiOutput.selected_action.target,
+      secondaryTarget: aiOutput.selected_action.secondary_target,
+      success: actionResult.success
+    });
 
     for (const eventUpdate of aiOutput.event_updates) {
       if (!events.some((event) => event.id === eventUpdate.event_id)) continue;
@@ -560,6 +640,7 @@ async function maybeRunSocialInteraction(input: {
         limit 6
       `
     ]);
+    const initiatingInventoryTruth = await buildInventoryTruthContext(input.world.id, input.actingAgent);
     const initiation = await generateSocialInitiation({
       initiatingAgent: input.actingAgent,
       targetAgent,
@@ -572,7 +653,8 @@ async function maybeRunSocialInteraction(input: {
       activeEvents: input.events,
       activeExperiment,
       stats: input.actingStats,
-      recentSocialTurns: recentTurns
+      recentSocialTurns: recentTurns,
+      inventoryTruthContext: initiatingInventoryTruth
     });
     if (!initiation.should_start || !initiation.public_message.trim()) return;
 
@@ -604,6 +686,19 @@ async function maybeRunSocialInteraction(input: {
       output: initiation,
       tickId: input.tickId
     });
+    await updateIntentionsFromText({
+      worldId: input.world.id,
+      agentId: input.actingAgent.id,
+      text: initiation.public_message
+    });
+    await maybeCreateSocialConfirmation({
+      world: input.world,
+      requesterAgentId: targetAgent.id,
+      targetAgentId: input.actingAgent.id,
+      message: initiation.public_message,
+      intent: initiation.intent,
+      subject: initiation.topic.toLowerCase().includes("panel") ? "utility_panel" : null
+    });
     const sentFirst = await sendAgentMessage(input.actingAgent, input.chatId, initiation.public_message);
     await sql`
       insert into telegram_messages (world_id, agent_id, telegram_chat_id, telegram_message_id, direction, sender_type, content)
@@ -612,6 +707,7 @@ async function maybeRunSocialInteraction(input: {
 
     const targetRelationships = await loadRelationshipContext(targetAgent.id);
     const targetPerception = await loadAgentPerceptionContext(targetAgent.id, input.world.id, targetRelationships);
+    const targetInventoryTruth = await buildInventoryTruthContext(input.world.id, targetAgent);
     const response = await generateSocialResponse({
       interaction,
       lastSocialTurn: firstTurn,
@@ -621,7 +717,8 @@ async function maybeRunSocialInteraction(input: {
       openCommitments,
       activeJointTasks,
       stats: targetBundle.stats,
-      activeEvents: input.events
+      activeEvents: input.events,
+      inventoryTruthContext: targetInventoryTruth
     });
     if (response.should_respond && response.public_message.trim()) {
       await addSocialTurn({
@@ -640,6 +737,19 @@ async function maybeRunSocialInteraction(input: {
         interaction,
         output: response,
         tickId: input.tickId
+      });
+      await updateIntentionsFromText({
+        worldId: input.world.id,
+        agentId: targetAgent.id,
+        text: response.public_message
+      });
+      await maybeCreateSocialConfirmation({
+        world: input.world,
+        requesterAgentId: input.actingAgent.id,
+        targetAgentId: targetAgent.id,
+        message: response.public_message,
+        intent: response.intent,
+        subject: response.public_message.toLowerCase().includes("panel") ? "utility_panel" : null
       });
       const sentSecond = await sendAgentMessage(targetAgent, input.chatId, response.public_message);
       await sql`
