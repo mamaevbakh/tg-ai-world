@@ -373,7 +373,40 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
 
   if (location.location_key === "storage_corner") {
     sceneGoal = "Find useful supplies for the current shelter problem.";
-    if (visibleKeys.has("torn_cloth") && !inventoryKeys.has("torn_cloth")) {
+    const crate = visibleObjects.find((object) => object.object_key === "storage_crate");
+    if (crate?.state?.jammed === true && crate.state.opened !== true) {
+      if (inventoryKeys.has("bent_screwdriver")) {
+        currentBeat = "The storage crate is jammed and the screwdriver is held. Open the crate now.";
+        actions.unshift(makeAction({
+          action_type: "open_container",
+          target: "storage_crate",
+          secondary_target: null,
+          label: "Open the jammed storage crate",
+          reason: "The held screwdriver can open the visible jammed crate.",
+          priority: "forced"
+        }));
+      } else {
+        const mainExit = exits.find((exit) => !exit.is_blocked && exit.to_location_key === "shelter_main");
+        const inspectedCrate = await recentSuccessfulAction({
+          worldId,
+          agentId,
+          actionType: "inspect_object",
+          target: "storage_crate",
+          limit: 8
+        });
+        if (mainExit && inspectedCrate) {
+          currentBeat = "The storage crate is jammed and the screwdriver is elsewhere. Return to the main room to coordinate the tool.";
+          actions.unshift(makeAction({
+            action_type: "move_to_location",
+            target: "shelter_main",
+            secondary_target: null,
+            label: "Return for the screwdriver",
+            reason: "The crate cannot be opened here without the screwdriver.",
+            priority: "forced"
+          }));
+        }
+      }
+    } else if (visibleKeys.has("torn_cloth") && !inventoryKeys.has("torn_cloth")) {
       currentBeat = "The northwest seam needs material and torn cloth is visible here. Pick it up.";
       actions.unshift(makeAction({
         action_type: "pick_up_item",
