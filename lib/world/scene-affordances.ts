@@ -325,6 +325,19 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
         priority: "forced"
       }));
     } else {
+      const crate = await loadObjectByKey(worldId, "storage_crate");
+      const adamNearby = sameLocationAgents.find((agent) => agent.agent_key === "adam");
+      if (crate?.state?.jammed === true && crate.state.opened !== true && inventoryKeys.has("bent_screwdriver") && adamNearby) {
+        currentBeat = "Adam returned from the jammed crate and this agent holds the screwdriver. Hand him the tool so the storage scene can continue.";
+        actions.unshift(makeAction({
+          action_type: "hand_item_to_agent",
+          target: "bent_screwdriver",
+          secondary_target: "adam",
+          label: "Hand Adam the screwdriver",
+          reason: "The storage crate is jammed and Adam needs the held tool to open it.",
+          priority: "forced"
+        }));
+      }
       const seam = visibleObjects.find((object) => object.object_key === "northwest_seam");
       const draftLevel = typeof seam?.state?.draft_level === "number" ? seam.state.draft_level : 0;
       if (seam && draftLevel >= 70) {
