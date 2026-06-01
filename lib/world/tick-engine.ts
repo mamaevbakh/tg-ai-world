@@ -35,6 +35,7 @@ import {
   buildInventoryTruthContext,
   completeMatchingIntention,
   detectAndUpsertRepeatedIntent,
+  ensureTaskRecoveryIntention,
   getActiveTaskIntention,
   loadActiveSocialConfirmations,
   maybeCreateSocialConfirmation,
@@ -119,6 +120,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       recentMoralIncidents: await loadRecentMoralIncidents(world.id, 8)
     };
     await detectAndUpsertRepeatedIntent(world.id, agent.id);
+    await ensureTaskRecoveryIntention(world.id, agent.id);
     const activeIntention = await getActiveTaskIntention(world.id, agent.id);
     const activeConfirmations = await loadActiveSocialConfirmations(world.id, world.tick_count);
     const inventoryTruth = await buildInventoryTruthContext(world.id, agent);

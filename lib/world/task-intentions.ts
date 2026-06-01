@@ -220,6 +220,50 @@ export async function detectAndUpsertRepeatedIntent(worldId: string, agentId: st
   return null;
 }
 
+export async function ensureTaskRecoveryIntention(worldId: string, agentId: string): Promise<AgentTaskIntention | null> {
+  const recentAskCount = await countRecentRepeatedAsks({ worldId, agentId });
+  if (recentAskCount < 2) return null;
+
+  const location = await loadAgentLocation(worldId, agentId);
+  if (location?.location_key !== "utility_wall") return null;
+
+  const panel = await loadObjectByKey(worldId, "utility_panel");
+  if (panel?.state?.opened === true) {
+    return upsertTaskIntention({
+      worldId,
+      agentId,
+      title: "Inspect Open Utility Panel",
+      currentStep: "Inspect fuse_box now that utility_panel is open",
+      requiredActionType: "inspect_object",
+      requiredTarget: "fuse_box",
+      requiredSecondaryTarget: null
+    });
+  }
+
+  if (await agentHasItem(worldId, agentId, "bent_screwdriver")) {
+    return upsertTaskIntention({
+      worldId,
+      agentId,
+      title: "Open Utility Panel Safely",
+      currentStep: "Use bent_screwdriver on utility_panel",
+      requiredActionType: "use_item_on_object",
+      requiredTarget: "bent_screwdriver",
+      requiredSecondaryTarget: "utility_panel"
+    });
+  }
+
+  return upsertTaskIntention({
+    worldId,
+    agentId,
+    title: "Check Utility Panel Safety",
+    currentStep: "Read warning_label instead of asking readiness again",
+    requiredActionType: "read_object",
+    requiredTarget: "warning_label",
+    requiredSecondaryTarget: null,
+    blockers: ["need_inventory"]
+  });
+}
+
 export async function updateIntentionsFromText(input: {
   worldId: string;
   agentId: string;
@@ -369,6 +413,20 @@ export async function refreshTaskBlockers(input: {
   let target = input.intention.required_target;
   let secondaryTarget = input.intention.required_secondary_target;
   let currentStep = input.intention.current_step;
+  const panel = await loadObjectByKey(input.worldId, "utility_panel");
+
+  if (input.intention.title === "Open Utility Panel Safely" && panel?.state?.opened === true) {
+    const [row] = await sql`
+      update agent_task_intentions
+      set status = 'completed',
+          completed_at = now(),
+          blockers = '[]'::jsonb,
+          updated_at = now()
+      where id = ${input.intention.id}
+      returning *
+    `;
+    return { ...(row as AgentTaskIntention), blockers: [] };
+  }
 
   if (input.intention.title === "Open Utility Panel Safely") {
     const warningRead = await actionSucceeded(input.worldId, input.agentId, "read_object", "warning_label");
