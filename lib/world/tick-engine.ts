@@ -136,7 +136,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       activeConfirmations,
       inventoryTruth
     };
-    const sceneContext = await buildSceneAffordanceContext(world.id, agent.id);
+    const sceneContext = await buildSceneAffordanceContext(world.id, agent.id, stats);
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 

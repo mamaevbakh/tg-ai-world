@@ -1,4 +1,5 @@
 import type { AgentTickOutput } from "@/lib/ai/schemas";
+import type { AgentStats } from "@/lib/world/state";
 import {
   loadAgentInventory,
   loadAgentLocation,
@@ -76,7 +77,7 @@ async function recentSuccessfulAction(input: {
   });
 }
 
-export async function buildSceneAffordanceContext(worldId: string, agentId: string): Promise<SceneAffordanceContext | null> {
+export async function buildSceneAffordanceContext(worldId: string, agentId: string, stats?: AgentStats): Promise<SceneAffordanceContext | null> {
   const location = await loadAgentLocation(worldId, agentId);
   if (!location) return null;
 
@@ -96,6 +97,14 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
   }
 
   const actions: SceneAffordance[] = [
+    makeAction({
+      action_type: "rest",
+      target: null,
+      secondary_target: null,
+      label: "Rest",
+      reason: "Recover enough energy to keep acting.",
+      priority: "available"
+    }),
     makeAction({
       action_type: "look_around",
       target: null,
@@ -300,6 +309,35 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
         reason: "The held tool matches the visible closed panel requirement.",
         priority: "forced"
       }));
+    }
+  }
+
+  if (location.location_key === "shelter_main") {
+    sceneGoal = "Recover, check basic needs, and choose the next shelter problem.";
+    if ((stats?.energy ?? 100) <= 10) {
+      currentBeat = "The agent is exhausted in the main room. Rest now before taking more tasks.";
+      actions.unshift(makeAction({
+        action_type: "rest",
+        target: null,
+        secondary_target: null,
+        label: "Rest on the sleeping mat",
+        reason: "Energy is critically low; continuing physical work would make the scene less believable.",
+        priority: "forced"
+      }));
+    } else {
+      const seam = visibleObjects.find((object) => object.object_key === "northwest_seam");
+      const draftLevel = typeof seam?.state?.draft_level === "number" ? seam.state.draft_level : 0;
+      if (seam && draftLevel >= 70) {
+        currentBeat = "The utility panel is stable, but the main room is still cold. The northwest seam is the next visible shelter problem.";
+        actions.unshift(makeAction({
+          action_type: "inspect_object",
+          target: "northwest_seam",
+          secondary_target: null,
+          label: "Check the northwest seam",
+          reason: "The panel scene is resolved; cold draft is the next visible survival pressure.",
+          priority: "recommended"
+        }));
+      }
     }
   }
 

@@ -946,7 +946,7 @@ export function registerCommands(bot: Bot) {
         events: bundle.events,
         relationships,
         embodiedState,
-        sceneContext: await buildSceneAffordanceContext(bundle.world.id, agent.id),
+        sceneContext: await buildSceneAffordanceContext(bundle.world.id, agent.id, agentBundle.stats),
         question
       });
       if (bundle.world.telegram_chat_id) {
@@ -1024,7 +1024,7 @@ export function registerCommands(bot: Bot) {
       events: bundle.events,
       relationships,
       embodiedState,
-      sceneContext: await buildSceneAffordanceContext(bundle.world.id, agent.id),
+      sceneContext: await buildSceneAffordanceContext(bundle.world.id, agent.id, agentBundle.stats),
       question
     });
     const text = answer.public_message;
