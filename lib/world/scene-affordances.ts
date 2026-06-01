@@ -328,14 +328,72 @@ export async function buildSceneAffordanceContext(worldId: string, agentId: stri
       const seam = visibleObjects.find((object) => object.object_key === "northwest_seam");
       const draftLevel = typeof seam?.state?.draft_level === "number" ? seam.state.draft_level : 0;
       if (seam && draftLevel >= 70) {
-        currentBeat = "The utility panel is stable, but the main room is still cold. The northwest seam is the next visible shelter problem.";
-        actions.unshift(makeAction({
-          action_type: "inspect_object",
+        const hasCloth = inventoryKeys.has("torn_cloth");
+        const inspectedSeam = await recentSuccessfulAction({
+          worldId,
+          agentId,
+          actionType: "inspect_object",
           target: "northwest_seam",
+          limit: 8
+        });
+        if (hasCloth) {
+          currentBeat = "The room is cold and torn cloth is held. Patch the northwest seam now.";
+          actions.unshift(makeAction({
+            action_type: "repair_object",
+            target: "northwest_seam",
+            secondary_target: null,
+            label: "Patch the northwest seam",
+            reason: "The held cloth matches the visible draft problem.",
+            priority: "forced"
+          }));
+        } else if (inspectedSeam) {
+          currentBeat = "The seam was inspected and needs material. Go to storage for cloth instead of inspecting it again.";
+          actions.unshift(makeAction({
+            action_type: "move_to_location",
+            target: "storage_corner",
+            secondary_target: null,
+            label: "Go to storage for cloth",
+            reason: "The draft problem is known; the next beat is getting material.",
+            priority: "forced"
+          }));
+        } else {
+          currentBeat = "The utility panel is stable, but the main room is still cold. The northwest seam is the next visible shelter problem.";
+          actions.unshift(makeAction({
+            action_type: "inspect_object",
+            target: "northwest_seam",
+            secondary_target: null,
+            label: "Check the northwest seam",
+            reason: "The panel scene is resolved; cold draft is the next visible survival pressure.",
+            priority: "recommended"
+          }));
+        }
+      }
+    }
+  }
+
+  if (location.location_key === "storage_corner") {
+    sceneGoal = "Find useful supplies for the current shelter problem.";
+    if (visibleKeys.has("torn_cloth") && !inventoryKeys.has("torn_cloth")) {
+      currentBeat = "The northwest seam needs material and torn cloth is visible here. Pick it up.";
+      actions.unshift(makeAction({
+        action_type: "pick_up_item",
+        target: "torn_cloth",
+        secondary_target: null,
+        label: "Pick up torn cloth",
+        reason: "The cloth is visible and useful for the cold seam.",
+        priority: "forced"
+      }));
+    } else if (inventoryKeys.has("torn_cloth")) {
+      const mainExit = exits.find((exit) => !exit.is_blocked && exit.to_location_key === "shelter_main");
+      if (mainExit) {
+        currentBeat = "The cloth is held. Return to the main room to patch the seam.";
+        actions.unshift(makeAction({
+          action_type: "move_to_location",
+          target: "shelter_main",
           secondary_target: null,
-          label: "Check the northwest seam",
-          reason: "The panel scene is resolved; cold draft is the next visible survival pressure.",
-          priority: "recommended"
+          label: "Return with cloth",
+          reason: "The material has been gathered; the repair target is in the main room.",
+          priority: "forced"
         }));
       }
     }
