@@ -9,6 +9,7 @@ import type { formatLocationContext } from "@/lib/world/map";
 import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
 import type { AgentCondition, MoralIncident } from "@/lib/world/ethics";
 import type { AgentTaskIntention, SocialConfirmation } from "@/lib/world/task-intentions";
+import type { SceneAffordanceContext } from "@/lib/world/scene-affordances";
 
 type GenerateTickInput = {
   world: World;
@@ -36,6 +37,7 @@ type GenerateTickInput = {
     activeConfirmations: SocialConfirmation[];
     inventoryTruth: unknown;
   };
+  sceneContext?: SceneAffordanceContext | null;
 };
 
 export async function generateAgentTick(input: GenerateTickInput): Promise<AgentTickOutput> {

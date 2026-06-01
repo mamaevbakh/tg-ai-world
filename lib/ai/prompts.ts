@@ -4,6 +4,7 @@ import type { formatLocationContext } from "@/lib/world/map";
 import type { AgentCommitment, JointTask, RelationshipEvent, SocialInteraction, SocialTurn } from "@/lib/world/social";
 import type { AgentCondition, MoralIncident } from "@/lib/world/ethics";
 import type { AgentTaskIntention, SocialConfirmation } from "@/lib/world/task-intentions";
+import type { SceneAffordanceContext } from "@/lib/world/scene-affordances";
 
 type PromptInput = {
   world: World;
@@ -31,6 +32,7 @@ type PromptInput = {
     activeConfirmations: SocialConfirmation[];
     inventoryTruth: unknown;
   };
+  sceneContext?: SceneAffordanceContext | null;
 };
 
 export function buildAgentTickPrompt(input: PromptInput): string {
@@ -77,6 +79,9 @@ Public message style:
 - If an active task intention names a required action and there is no blocker, prefer that concrete action over asking readiness again.
 - If a safety blocker exists, choose a concrete safety action such as read_object or inspect_object; do not loop on ask_agent.
 - Active confirmations are stateful. If another agent already confirmed readiness or watch support and it has not expired, do not ask for the same confirmation again.
+- Treat the scene like an interactive film: a turn should create one visible beat using something you can see, hold, hear, say, or physically do.
+- If scene affordances are provided, choose from available_actions. If an action has priority "forced", choose it unless it is physically impossible.
+- Do not use speech to postpone a forced physical beat. Use say_to_agent only when speaking is the beat.
 - If you make a concrete promise, it must be represented in the structured social system by a later social interaction.
 - Bad: "If anyone has ideas about makeshift insulation, tell me and I'll try them next."
 - Better: "I wish I knew more about insulation. For now, I'll mark the coldest seams and test what the toolkit can do before evening."
@@ -101,6 +106,11 @@ Allowed actions:
 - observe_agent: observe another inhabitant without assuming private thoughts.
 - share_observation: publicly share one observation if useful.
 - ask_agent: ask another inhabitant a concrete question.
+- say_to_agent: say one short grounded line to a nearby agent.
+- watch_object: monitor a visible object while the scene continues.
+- step_back: step away from a risky object without leaving the location.
+- hand_item_to_agent: hand a held item to a nearby agent. Put item in target and agent_key in secondary_target.
+- confirm_ready: give a one-time readiness confirmation to a nearby agent.
 - look_around: inspect current location and visible exits.
 - move_to_location: move through a listed exit by location key.
 - pick_up_item: pick up a listed portable visible object.
@@ -166,6 +176,9 @@ ${JSON.stringify(input.ethicalContext ?? null, null, 2)}
 
 Task resolution context:
 ${JSON.stringify(input.taskContext ?? null, null, 2)}
+
+Scene affordance context:
+${JSON.stringify(input.sceneContext ?? null, null, 2)}
 
 Make public_message short, atmospheric, and readable in Telegram: 1 to 5 short paragraphs.`;
 }

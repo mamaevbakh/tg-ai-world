@@ -71,6 +71,22 @@ async function hasInventoryItem(worldId: string, agentId: string, objectKey: str
   return inventory.some((item) => item.object_key === objectKey);
 }
 
+async function loadSameLocationAgent(input: WorldInteractionInput, location: WorldLocation, agentKey?: string | null): Promise<{ id: string; name: string; agent_key: string | null } | null> {
+  if (!agentKey) return null;
+  const [agent] = await sql`
+    select a.id, a.name, a.agent_key
+    from agents a
+    join agent_locations al on al.agent_id = a.id
+    where a.world_id = ${input.worldId}
+      and a.status = 'active'
+      and a.id <> ${input.agentId}
+      and al.location_id = ${location.id}
+      and lower(coalesce(a.agent_key, a.name)) = lower(${agentKey})
+    limit 1
+  `;
+  return (agent as { id: string; name: string; agent_key: string | null } | undefined) ?? null;
+}
+
 async function patchObjectState(worldId: string, objectKey: string, statePatch: Record<string, unknown>) {
   const object = await loadObjectByKey(worldId, objectKey);
   if (!object) return;
@@ -176,6 +192,85 @@ export async function executeWorldInteraction(input: WorldInteractionInput): Pro
           emotional_valence: object.object_type === "unknown" ? -1 : 0,
           visibility: "private_to_agent"
         }
+      });
+      break;
+    }
+    case "watch_object": {
+      object = await objectAtAgent(input, location);
+      if (!object || object.location_id !== location.id) {
+        output = result({ success: false, feedback: `The object ${input.target ?? ""} is not visible here.` });
+        break;
+      }
+      output = result({
+        success: true,
+        feedback: `Watched ${object.name} for visible changes. ${stateLine(object)}`,
+        statEffects: { energy: -1, curiosity: 1 },
+        createdObservation: {
+          observation_type: object.object_type === "machine" ? "system" : "world",
+          subject: object.object_key,
+          content: `Watched ${object.name}: ${stateLine(object)}`,
+          confidence: 80,
+          importance: 4,
+          emotional_valence: object.object_key === "exposed_cable" ? -1 : 0,
+          visibility: "private_to_agent"
+        }
+      });
+      break;
+    }
+    case "step_back": {
+      output = result({
+        success: true,
+        feedback: `Stepped back at ${location.name}, keeping the visible hazards in view.`,
+        statEffects: { stress: -1, fear: -1 }
+      });
+      break;
+    }
+    case "say_to_agent":
+    case "confirm_ready": {
+      const targetAgent = await loadSameLocationAgent(input, location, input.target);
+      if (!targetAgent) {
+        output = result({ success: false, feedback: `No nearby agent matched ${input.target ?? ""}.` });
+        break;
+      }
+      output = result({
+        success: true,
+        feedback: input.actionType === "confirm_ready"
+          ? `Confirmed readiness to ${targetAgent.name}.`
+          : `Spoke to ${targetAgent.name}.`,
+        statEffects: { influence: 1, morale: input.actionType === "confirm_ready" ? 1 : 0 }
+      });
+      break;
+    }
+    case "hand_item_to_agent": {
+      const itemKey = input.target;
+      const targetAgent = await loadSameLocationAgent(input, location, input.secondaryTarget);
+      if (!itemKey || !targetAgent) {
+        output = result({ success: false, feedback: "A held item and nearby target agent are required." });
+        break;
+      }
+      const item = await loadObjectByKey(input.worldId, itemKey);
+      if (!item || !(await hasInventoryItem(input.worldId, input.agentId, item.object_key))) {
+        output = result({ success: false, feedback: `${itemKey} is not in inventory.` });
+        break;
+      }
+      await sql`
+        delete from agent_inventory_items
+        where world_id = ${input.worldId}
+          and agent_id = ${input.agentId}
+          and object_id = ${item.id}
+      `;
+      await sql`
+        insert into agent_inventory_items (world_id, agent_id, object_id, quantity)
+        values (${input.worldId}, ${targetAgent.id}, ${item.id}, 1)
+        on conflict (agent_id, object_id) do update
+        set quantity = agent_inventory_items.quantity + 1,
+            updated_at = now()
+      `;
+      output = result({
+        success: true,
+        feedback: `Handed ${item.name} to ${targetAgent.name}.`,
+        statEffects: { morale: 1, influence: 1 },
+        inventoryEffects: [{ objectKey: item.object_key, quantityDelta: -1 }]
       });
       break;
     }

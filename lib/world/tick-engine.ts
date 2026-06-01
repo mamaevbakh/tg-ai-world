@@ -1,4 +1,4 @@
-import { sql } from "@/lib/db";
+﻿import { sql } from "@/lib/db";
 import { generateAgentTick } from "@/lib/ai/agent-generate-tick";
 import { getPhase, loadActiveAgents, loadAgentBundle, loadAgentByKey, loadWorldBundle, selectNextAgentForTick, type Agent, type World, type WorldEvent, type WorldState } from "@/lib/world/state";
 import { applySelectedAction } from "@/lib/world/action-registry";
@@ -42,6 +42,7 @@ import {
   maybeCreateSocialConfirmation,
   updateIntentionsFromText
 } from "@/lib/world/task-intentions";
+import { applySceneActionPolicy, buildSceneAffordanceContext } from "@/lib/world/scene-affordances";
 
 type TickResult = {
   status: "skipped" | "completed" | "failed";
@@ -54,6 +55,11 @@ const embodiedActionTypes = new Set([
   "look_around",
   "move_to_location",
   "inspect_object",
+  "say_to_agent",
+  "watch_object",
+  "step_back",
+  "hand_item_to_agent",
+  "confirm_ready",
   "pick_up_item",
   "open_container",
   "use_item",
@@ -130,6 +136,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
       activeConfirmations,
       inventoryTruth
     };
+    const sceneContext = await buildSceneAffordanceContext(world.id, agent.id);
     const worldBefore = { world, worldState, events };
     const agentBefore = { agent, stats, memories };
 
@@ -140,7 +147,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
     `;
     tickId = (tick as { id: string }).id;
 
-    const rawAiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext, ethicalContext, taskContext });
+    const rawAiOutput = await generateAgentTick({ world, agent, stats, worldState, events, memories, phase, perception, embodiedContext, socialContext, ethicalContext, taskContext, sceneContext });
     await updateIntentionsFromText({
       worldId: world.id,
       agentId: agent.id,
@@ -151,13 +158,14 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         rawAiOutput.selected_action.reason ?? ""
       ].join("\n")
     });
-    const aiOutput = await applyTaskActionPolicy({
+    const taskPolicyOutput = await applyTaskActionPolicy({
       worldId: world.id,
       agentId: agent.id,
       output: rawAiOutput,
       activeIntention: await getActiveTaskIntention(world.id, agent.id),
       activeConfirmations
     });
+    const aiOutput = applySceneActionPolicy({ output: taskPolicyOutput, sceneContext });
     const isEmbodiedAction = embodiedActionTypes.has(aiOutput.selected_action.type);
     const interactionResult = isEmbodiedAction
       ? await executeWorldInteraction({
@@ -263,7 +271,7 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
         ${JSON.stringify([])}
       )
     `;
-    if (aiOutput.selected_action.type === "ask_agent" && aiOutput.selected_action.target) {
+    if (["ask_agent", "say_to_agent", "confirm_ready"].includes(aiOutput.selected_action.type) && aiOutput.selected_action.target) {
       const targetAgent = await loadAgentByKey(world.id, aiOutput.selected_action.target);
       if (targetAgent) {
         const interaction = await createSocialInteraction({
@@ -284,22 +292,21 @@ export async function runTick(options: { forced?: boolean; sendTelegram?: boolea
             targetAgentId: targetAgent.id,
             message: aiOutput.public_message,
             emotionalTone: "task coordination",
-            intent: "ask"
+            intent: aiOutput.selected_action.type === "ask_agent" ? "ask" : "inform"
           });
         }
-        if (/(panel|панел|нагруз|load|screwdriver|отв[её]рт)/i.test(aiOutput.public_message)) {
+        if (/(panel|панел|нагруз|load|screwdriver|отв[её]рт|готов|ready)/i.test(aiOutput.public_message)) {
           await maybeCreateSocialConfirmation({
             world,
             requesterAgentId: targetAgent.id,
             targetAgentId: agent.id,
             message: aiOutput.public_message,
-            intent: /(изолирован|isolated|ready|готов|предупреж)/i.test(aiOutput.public_message) ? "answer" : "ask",
+            intent: aiOutput.selected_action.type === "confirm_ready" || /(изолирован|isolated|ready|готов|предупреж)/i.test(aiOutput.public_message) ? "answer" : "ask",
             subject: "utility_panel"
           });
         }
       }
-    }
-    await completeMatchingIntention({
+    }    await completeMatchingIntention({
       worldId: world.id,
       agentId: agent.id,
       actionType: aiOutput.selected_action.type,
@@ -779,3 +786,4 @@ async function maybeRunSocialInteraction(input: {
     `;
   }
 }
+
