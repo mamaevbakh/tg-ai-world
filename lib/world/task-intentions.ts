@@ -550,6 +550,16 @@ export async function advanceTaskIntentionsAfterAction(input: {
   }
 
   if (input.actionType === "use_item_on_object" && input.target === "bent_screwdriver" && input.secondaryTarget === "loose_fuse") {
+    await sql`
+      update agent_task_intentions
+      set status = 'completed',
+          completed_at = now(),
+          updated_at = now(),
+          blockers = '[]'::jsonb
+      where world_id = ${input.worldId}
+        and status = 'active'
+        and title in ('Inspect Open Utility Panel', 'Inspect Loose Fuse')
+    `;
     await upsertTaskIntention({
       worldId: input.worldId,
       agentId: input.agentId,
@@ -559,6 +569,19 @@ export async function advanceTaskIntentionsAfterAction(input: {
       requiredTarget: "utility_panel",
       requiredSecondaryTarget: null
     });
+  }
+
+  if (input.actionType === "listen_to_object" && input.target === "utility_panel") {
+    await sql`
+      update agent_task_intentions
+      set status = 'completed',
+          completed_at = now(),
+          updated_at = now(),
+          blockers = '[]'::jsonb
+      where world_id = ${input.worldId}
+        and status = 'active'
+        and title in ('Inspect Open Utility Panel', 'Inspect Loose Fuse')
+    `;
   }
 }
 
