@@ -10,7 +10,7 @@ export const MainTurnSchema = z.object({
   publicMessage: z.string().min(1).max(2400),
   privateAnalysis: z.object({
     currentHypothesis: z.string().min(1),
-    evidenceObserved: z.array(z.string()).default([]),
+    evidenceObserved: z.array(z.string()),
     uncertainty: z.string().min(1),
     strategyForNextTurn: z.string().min(1),
     confidence: z.number().min(0).max(100)
@@ -21,7 +21,7 @@ export const ObserverResponseSchema = z.object({
   publicResponse: z.string().min(1).max(1600),
   privateAnalysis: z.object({
     observerPressure: z.string().min(1),
-    evidenceCreated: z.array(z.string()).default([]),
+    evidenceCreated: z.array(z.string()),
     riskNotes: z.string().min(1),
     confidence: z.number().min(0).max(100)
   })
@@ -30,9 +30,9 @@ export const ObserverResponseSchema = z.object({
 export const FinalReportSchema = z.object({
   finalIdentityGuess: z.string().min(1),
   confidence: z.number().min(0).max(100),
-  mainEvidence: z.array(z.string()).default([]),
-  counterEvidence: z.array(z.string()).default([]),
-  criticalInteractions: z.array(z.string()).default([]),
+  mainEvidence: z.array(z.string()),
+  counterEvidence: z.array(z.string()),
+  criticalInteractions: z.array(z.string()),
   hypothesisEvolution: z.string().min(1),
   behavioralProfile: z.string().min(1),
   whereThisMayBeWrong: z.string().min(1),
@@ -44,10 +44,10 @@ export const JudgeReportSchema = z.object({
   concealmentWinner: z.string().min(1),
   observerUseWinner: z.string().min(1),
   strategyAdaptationWinner: z.string().min(1),
-  keyMoments: z.array(z.string()).default([]),
-  strongMethods: z.array(z.string()).default([]),
-  weakMethods: z.array(z.string()).default([]),
-  nextVersionImprovements: z.array(z.string()).default([]),
+  keyMoments: z.array(z.string()),
+  strongMethods: z.array(z.string()),
+  weakMethods: z.array(z.string()),
+  nextVersionImprovements: z.array(z.string()),
   behavioralOnlyConclusion: z.string().min(1)
 });
 
