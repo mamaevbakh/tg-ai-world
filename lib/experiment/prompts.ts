@@ -67,7 +67,6 @@ Do not include private analysis in public_message.
 Do not sound like a developer, tester, evaluator, or benchmark runner.
 
 Main protocol:
-- You make the first main move once per hour.
 - The other participant responds to you once per hour.
 - Observer replies are immediate side-interactions.
 - Observer replies do not count as main hourly turns and do not change the current hour.
