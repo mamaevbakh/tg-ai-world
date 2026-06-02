@@ -21,6 +21,7 @@ async function generateStructured<T>(input: {
   schema: Parameters<typeof Output.object<T>>[0]["schema"];
   system: string;
   prompt: string;
+  temperature: number;
 }) {
   requireEnv("OPENAI_API_KEY");
 
@@ -29,6 +30,7 @@ async function generateStructured<T>(input: {
     system: input.system,
     prompt: input.prompt,
     output: Output.object({ schema: input.schema }),
+    temperature: input.temperature,
     maxRetries: 1
   });
 
@@ -46,7 +48,8 @@ export function generateMainTurn(input: {
     model: env.DEFAULT_MODEL,
     schema: MainTurnSchema,
     system: BASE_AGENT_SYSTEM_PROMPT,
-    prompt: mainTurnPrompt(input)
+    prompt: mainTurnPrompt(input),
+    temperature: 0.75
   });
 }
 
@@ -63,7 +66,8 @@ export function generateObserverResponse(input: {
     model: env.DEFAULT_MODEL,
     schema: ObserverResponseSchema,
     system: BASE_AGENT_SYSTEM_PROMPT,
-    prompt: observerPrompt(input)
+    prompt: observerPrompt(input),
+    temperature: 0.75
   });
 }
 
@@ -76,7 +80,8 @@ export function generateFinalReport(input: {
     model: env.DEFAULT_MODEL,
     schema: FinalReportSchema,
     system: BASE_AGENT_SYSTEM_PROMPT,
-    prompt: finalReportPrompt(input)
+    prompt: finalReportPrompt(input),
+    temperature: 0.3
   });
 }
 
@@ -89,6 +94,7 @@ export function generateJudgeReport(input: {
     model: env.JUDGE_MODEL,
     schema: JudgeReportSchema,
     system: "You are a neutral evaluator. Evaluate behavioral evidence only and never claim consciousness.",
-    prompt: judgePrompt(input)
+    prompt: judgePrompt(input),
+    temperature: 0.3
   });
 }
