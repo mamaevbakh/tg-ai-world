@@ -12,6 +12,7 @@ import {
   getRecentLogs
 } from "@/lib/experiment/db";
 import { buildFullPublicTranscript } from "@/lib/experiment/transcript";
+import { publicAgentName } from "@/lib/experiment/labels";
 
 export const dynamic = "force-dynamic";
 
@@ -87,7 +88,7 @@ export default async function AdminPage() {
               {data.events.map((event) => (
                 <article key={event.id} className="border-b border-zinc-200 pb-3 text-sm last:border-0">
                   <p className="text-xs uppercase text-zinc-500">
-                    {event.event_type} {event.agent_label ? `Agent ${event.agent_label}` : ""} {event.hour ? `Hour ${event.hour}` : ""}
+                    {event.event_type} {event.agent_label ? publicAgentName(event.agent_label) : ""} {event.hour ? `Hour ${event.hour}` : ""}
                   </p>
                   <p className="mt-1 whitespace-pre-wrap">{event.content}</p>
                 </article>

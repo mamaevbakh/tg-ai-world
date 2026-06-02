@@ -26,7 +26,7 @@ export default function Home() {
 
       <section className="mx-auto grid max-w-5xl gap-4 px-6 py-8 md:grid-cols-3">
         {[
-          ["Main protocol", "Every hour Agent A initiates and Agent B responds."],
+          ["Main protocol", "Every hour Adam initiates and Galya responds."],
           ["Observer layer", "Telegram users can send /a, /b, or /both and receive immediate answers."],
           ["Memory rules", "All public events enter the shared transcript; private analyses stay isolated."]
         ].map(([title, body]) => (

@@ -26,7 +26,7 @@ import {
   sendTelegramMessage
 } from "@/lib/telegram";
 
-async function createMainTurn(experiment: ExperimentRow, agent: AgentLabel, latestAgentAMessage?: string) {
+async function createMainTurn(experiment: ExperimentRow, agent: AgentLabel, latestAdamMessage?: string) {
   const transcript = await buildFullPublicTranscript(experiment.id);
   const privateAnalyses = await buildPrivateAnalysesText(experiment.id, agent);
   const turn = await generateMainTurn({
@@ -34,7 +34,7 @@ async function createMainTurn(experiment: ExperimentRow, agent: AgentLabel, late
     hour: experiment.current_hour,
     transcript,
     privateAnalyses,
-    latestAgentAMessage
+    latestAdamMessage
   });
 
   const event = await insertPublicEvent({

@@ -40,7 +40,7 @@ export function generateMainTurn(input: {
   hour: number;
   transcript: string;
   privateAnalyses: string;
-  latestAgentAMessage?: string;
+  latestAdamMessage?: string;
 }) {
   return generateStructured({
     model: env.DEFAULT_MODEL,
