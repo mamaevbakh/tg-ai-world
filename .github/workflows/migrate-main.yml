@@ -1,15 +1,7 @@
 name: Migrate Neon main
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "db/migrations/**"
-      - "scripts/migrate.mjs"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/migrate-main.yml"
+  workflow_dispatch:
 
 jobs:
   migrate:
