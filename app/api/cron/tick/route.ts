@@ -1,23 +1,28 @@
-import { NextResponse } from "next/server";
-import { env } from "@/lib/env";
-import { runTick } from "@/lib/world/tick-engine";
+import { runNextHour } from "@/lib/experiment/engine";
+import { requireEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-async function handleCronTick(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (authorization !== `Bearer ${env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function POST(request: Request) {
+  const secret =
+    request.headers.get("x-cron-secret") ??
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+
+  if (secret !== requireEnv("CRON_SECRET")) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await runTick({ forced: false, sendTelegram: true });
-  return NextResponse.json(result);
+  const result = await runNextHour();
+  return Response.json(result, { status: result.ok ? 200 : 409 });
 }
 
 export async function GET(request: Request) {
-  return handleCronTick(request);
-}
+  const url = new URL(request.url);
+  if (url.searchParams.get("secret") !== requireEnv("CRON_SECRET")) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-export async function POST(request: Request) {
-  return handleCronTick(request);
+  const result = await runNextHour();
+  return Response.json(result, { status: result.ok ? 200 : 409 });
 }

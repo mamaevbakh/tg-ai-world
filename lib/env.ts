@@ -1,17 +1,26 @@
 import { z } from "zod";
 
+const optionalNonEmpty = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().min(1).optional()
+);
+
+const optionalUrl = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.url().optional()
+);
+
 const envSchema = z.object({
-  DATABASE_URL: z.url(),
-  OPENAI_API_KEY: z.string().min(1),
-  OPENAI_MODEL: z.string().min(1).default("gpt-5-mini"),
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_BOT_TOKEN_ADAM: z.string().optional(),
-  TELEGRAM_BOT_TOKEN_GALYA: z.string().optional(),
-  TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
-  TELEGRAM_ADMIN_IDS: z.string().min(1),
-  CRON_SECRET: z.string().min(1),
-  APP_URL: z.url(),
-  ENABLE_BEHAVIOR_EVALUATOR: z.string().default("true")
+  DATABASE_URL: optionalUrl,
+  OPENAI_API_KEY: optionalNonEmpty,
+  TELEGRAM_AGENT_A_BOT_TOKEN: optionalNonEmpty,
+  TELEGRAM_AGENT_B_BOT_TOKEN: optionalNonEmpty,
+  TELEGRAM_CHAT_ID: optionalNonEmpty,
+  CRON_SECRET: optionalNonEmpty,
+  ADMIN_SECRET: optionalNonEmpty,
+  DEFAULT_MODEL: z.string().min(1).default("gpt-5-mini"),
+  JUDGE_MODEL: z.string().min(1).default("gpt-5-mini"),
+  APP_BASE_URL: optionalUrl
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -32,17 +41,11 @@ export const env = new Proxy({} as AppEnv, {
   }
 });
 
-export function getTelegramAdminIds(): string[] {
-  return getEnv().TELEGRAM_ADMIN_IDS.split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-}
-
-export function getAdamTelegramBotToken(): string {
-  const token = getEnv().TELEGRAM_BOT_TOKEN_ADAM ?? getEnv().TELEGRAM_BOT_TOKEN;
-  if (!token) {
-    throw new Error("Missing TELEGRAM_BOT_TOKEN_ADAM.");
+export function requireEnv<Key extends keyof AppEnv>(key: Key): NonNullable<AppEnv[Key]> {
+  const value = getEnv()[key];
+  if (!value) {
+    throw new Error(`Missing ${key}.`);
   }
 
-  return token;
+  return value as NonNullable<AppEnv[Key]>;
 }

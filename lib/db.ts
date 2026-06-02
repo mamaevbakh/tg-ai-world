@@ -1,18 +1,21 @@
 import { neon } from "@neondatabase/serverless";
-import { env } from "@/lib/env";
+import { requireEnv } from "@/lib/env";
 
-type SqlTag = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
+type SqlTag = <T extends Record<string, unknown> = Record<string, unknown>>(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) => Promise<T[]>;
 
 let cachedSql: ReturnType<typeof neon> | null = null;
 
 function getSql() {
   if (!cachedSql) {
-    cachedSql = neon(env.DATABASE_URL);
+    cachedSql = neon(requireEnv("DATABASE_URL"));
   }
 
   return cachedSql;
 }
 
 export const sql: SqlTag = (strings, ...values) => {
-  return getSql()(strings, ...values) as unknown as Promise<Record<string, unknown>[]>;
+  return getSql()(strings, ...values) as unknown as Promise<never[]>;
 };
