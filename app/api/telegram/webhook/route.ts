@@ -1,4 +1,4 @@
-import { getActiveExperiment } from "@/lib/experiment/db";
+import { getActiveExperiment, logExperimentError } from "@/lib/experiment/db";
 import { handleObserverMessage } from "@/lib/experiment/engine";
 import { ObserverTargetSchema } from "@/lib/experiment/schemas";
 
@@ -41,18 +41,23 @@ export async function POST(request: Request) {
     message?.from?.first_name ??
     String(message?.from?.id ?? "anonymous");
 
-  await handleObserverMessage({
-    experimentId: experiment.id,
-    username: `@${username.replace(/^@/, "")}`,
-    target: parsed.target,
-    message: parsed.message
-  });
+  try {
+    await handleObserverMessage({
+      experimentId: experiment.id,
+      username: `@${username.replace(/^@/, "")}`,
+      target: parsed.target,
+      message: parsed.message
+    });
+  } catch (error) {
+    await logExperimentError(experiment.id, "Telegram observer response failed", serializeError(error));
+    throw error;
+  }
 
   return Response.json({ ok: true });
 }
 
 function parseObserverCommand(text: string) {
-  const match = text.match(/^\/(a|b|both)(?:@\S+)?\s+(.+)$/i);
+  const match = text.match(/^\/(a|b|both)(?:@\S+)?\s+([\s\S]+)$/i);
   if (!match) return null;
 
   const rawTarget = match[1].toLowerCase() === "a" ? "A" : match[1].toLowerCase() === "b" ? "B" : "both";
@@ -62,6 +67,14 @@ function parseObserverCommand(text: string) {
   if (isModerated(message)) return null;
 
   return { target, message };
+}
+
+function serializeError(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack };
+  }
+
+  return { error };
 }
 
 function isModerated(message: string) {
