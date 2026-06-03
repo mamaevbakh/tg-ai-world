@@ -4,12 +4,17 @@ import { requireEnv } from "@/lib/env";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  const secret =
+function cronSecretFromRequest(request: Request) {
+  const url = new URL(request.url);
+  return (
     request.headers.get("x-cron-secret") ??
-    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
+    url.searchParams.get("secret")
+  );
+}
 
-  if (secret !== requireEnv("CRON_SECRET")) {
+export async function POST(request: Request) {
+  if (cronSecretFromRequest(request) !== requireEnv("CRON_SECRET")) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -18,8 +23,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  if (url.searchParams.get("secret") !== requireEnv("CRON_SECRET")) {
+  if (cronSecretFromRequest(request) !== requireEnv("CRON_SECRET")) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
