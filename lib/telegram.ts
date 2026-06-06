@@ -36,10 +36,44 @@ export async function sendTelegramMessage(agent: AgentLabel, text: string) {
   return String(payload.result?.message_id ?? "");
 }
 
+export async function sendLongTelegramMessage(agent: AgentLabel, text: string) {
+  const chunks = splitTelegramText(text);
+  const messageIds = [];
+
+  for (const chunk of chunks) {
+    messageIds.push(await sendTelegramMessage(agent, chunk));
+  }
+
+  return messageIds;
+}
+
 export function renderMainTelegramMessage(agent: AgentLabel, hour: number, message: string) {
   return `${formatAgentTitle(agent, "main", hour)}\n\n${message}`;
 }
 
 export function renderObserverTelegramMessage(agent: AgentLabel, username: string, message: string) {
   return `${formatAgentTitle(agent, "observer", undefined, username)}\n\n${message}`;
+}
+
+function splitTelegramText(text: string, maxLength = 3600) {
+  if (text.length <= maxLength) return [text];
+
+  const chunks = [];
+  let rest = text;
+
+  while (rest.length > maxLength) {
+    const window = rest.slice(0, maxLength);
+    const splitAt = Math.max(
+      window.lastIndexOf("\n\n"),
+      window.lastIndexOf("\n"),
+      window.lastIndexOf(". "),
+      window.lastIndexOf("; ")
+    );
+    const end = splitAt > 1200 ? splitAt + 1 : maxLength;
+    chunks.push(rest.slice(0, end).trim());
+    rest = rest.slice(end).trim();
+  }
+
+  if (rest) chunks.push(rest);
+  return chunks;
 }

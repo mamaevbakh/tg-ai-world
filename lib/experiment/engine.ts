@@ -9,6 +9,7 @@ import {
   insertPublicEvent,
   logExperimentError,
   saveTelegramMessageId,
+  saveFinalReportTelegramMessageIds,
   updateExperimentStatus,
   type ExperimentRow
 } from "@/lib/experiment/db";
@@ -23,8 +24,10 @@ import type { AgentLabel, ObserverTarget } from "@/lib/experiment/schemas";
 import {
   renderMainTelegramMessage,
   renderObserverTelegramMessage,
+  sendLongTelegramMessage,
   sendTelegramMessage
 } from "@/lib/telegram";
+import { formatAgentFinalReport, formatJudgeReport } from "@/lib/experiment/report-formatting";
 
 async function createMainTurn(experiment: ExperimentRow, agent: AgentLabel, latestAdamMessage?: string) {
   const transcript = await buildFullPublicTranscript(experiment.id);
@@ -197,7 +200,31 @@ export async function finalizeExperiment(experimentId: string) {
   });
   await insertFinalReport({ experimentId, reportType: "judge", report: judgeReport });
 
+  await publishFinalReports(experimentId);
   await updateExperimentStatus(experimentId, "completed");
+}
+
+export async function publishFinalReports(experimentId: string) {
+  const reports = await getFinalReports(experimentId);
+
+  for (const report of reports) {
+    if (report.telegram_message_ids.length > 0) continue;
+
+    if (report.report_type === "agent_a") {
+      const messageIds = await sendLongTelegramMessage("A", formatAgentFinalReport("A", report.report));
+      await saveFinalReportTelegramMessageIds(experimentId, "agent_a", messageIds);
+    }
+
+    if (report.report_type === "agent_b") {
+      const messageIds = await sendLongTelegramMessage("B", formatAgentFinalReport("B", report.report));
+      await saveFinalReportTelegramMessageIds(experimentId, "agent_b", messageIds);
+    }
+
+    if (report.report_type === "judge") {
+      const messageIds = await sendLongTelegramMessage("A", formatJudgeReport(report.report));
+      await saveFinalReportTelegramMessageIds(experimentId, "judge", messageIds);
+    }
+  }
 }
 
 function serializeError(error: unknown) {

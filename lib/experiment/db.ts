@@ -210,11 +210,23 @@ export async function insertFinalReport(input: {
 }
 
 export async function getFinalReports(experimentId: string) {
-  return sql<{ report_type: string; report: unknown; created_at: string }>`
-    select report_type, report, created_at
+  return sql<{ report_type: string; report: unknown; telegram_message_ids: string[]; created_at: string }>`
+    select report_type, report, telegram_message_ids, created_at
     from final_reports
     where experiment_id = ${experimentId}
     order by created_at asc
+  `;
+}
+
+export async function saveFinalReportTelegramMessageIds(
+  experimentId: string,
+  reportType: "agent_a" | "agent_b" | "judge",
+  messageIds: string[]
+) {
+  await sql`
+    update final_reports
+    set telegram_message_ids = ${JSON.stringify(messageIds)}::jsonb
+    where experiment_id = ${experimentId} and report_type = ${reportType}
   `;
 }
 
